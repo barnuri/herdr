@@ -154,6 +154,8 @@ impl ClientShellState {
     ) -> Option<crate::client::frame_output::ComposedFrame> {
         self.last_composed_at = Some(std::time::Instant::now());
         self.selection_repaint_deadline = None;
+        self.display_maps.clear();
+        self.popup_display_maps.clear();
         if self.last_composed_size != Some((cols, rows)) && self.mode == ClientShellMode::Navigate {
             self.reveal_navigation_workspace = true;
             self.reveal_mobile_workspace = true;
@@ -450,6 +452,27 @@ impl ClientShellState {
                 }
             }
         }
+        // Display transforms run after every logical highlight is stamped, so
+        // highlights move with their glyphs.
+        if !self.config.pane_display.is_empty() {
+            for hit in &self.hits.panes {
+                if super::display::graphics_overlap(
+                    &surface.graphics,
+                    layout.pane_surface,
+                    hit.inner_rect,
+                ) {
+                    continue;
+                }
+                super::display::apply_pane_display(
+                    &self.config.pane_display,
+                    &mut self.display_scratch,
+                    &mut self.display_maps,
+                    &mut frame,
+                    hit.inner_rect,
+                    mode_bar.map(|bar| bar.y),
+                );
+            }
+        }
         restore_mode_bar(&mut frame, mode_bar, mode_bar_cells.as_deref());
         self.hits.notification_toast = Rect::default();
         let has_config_diagnostic = self.config_diagnostic.is_some();
@@ -580,6 +603,16 @@ impl ClientShellState {
                 ratatui::widgets::Widget::render(block, geometry.outer, &mut composed);
                 frame.replace_from_ratatui_buffer_preserving_effects(&composed, None);
                 blit_pane_surface(&mut frame, &popup.frame, geometry.inner);
+                if popup.frame.graphics.is_empty() {
+                    super::display::apply_pane_display(
+                        &self.config.pane_display,
+                        &mut self.display_scratch,
+                        &mut self.popup_display_maps,
+                        &mut frame,
+                        geometry.inner,
+                        None,
+                    );
+                }
                 self.hits.popup = Some(PaneHit {
                     rect: geometry.outer,
                     inner_rect: geometry.inner,

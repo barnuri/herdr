@@ -980,6 +980,11 @@ pub struct UiConfig {
     pub pane_gaps: bool,
     /// Show agent labels in split pane borders when no manual pane label is set. Default: false.
     pub show_agent_labels_on_pane_borders: bool,
+    /// Built-in display transforms applied, in order, to each pane row before
+    /// it is drawn. "bidi" lays out right-to-left text with the Unicode
+    /// Bidirectional Algorithm and a left-to-right base direction. Copied text
+    /// keeps logical order. Empty by default.
+    pub pane_transforms: Vec<String>,
     /// Hide the tab row when the workspace has one tab. Default: false.
     pub hide_tab_bar_when_single_tab: bool,
     /// Desktop tab row placement. Default: top.
@@ -1220,6 +1225,7 @@ impl Default for UiConfig {
             show_agent_labels_on_pane_borders: false,
             hide_tab_bar_when_single_tab: false,
             tab_bar_position: TabBarPositionConfig::Top,
+            pane_transforms: Vec::new(),
             tab_bar_right: Vec::new(),
             tab_bar_right_separator: " ".into(),
             window_title: super::window_title::default_window_title(),
@@ -2038,6 +2044,29 @@ pane_history = true
         let config: Config = toml::from_str(toml).unwrap();
 
         assert!(config.experimental.pane_history);
+    }
+
+    #[test]
+    fn pane_transforms_are_opt_in_and_report_unknown_names() {
+        let default = Config::default();
+        assert!(default.ui.pane_transforms.is_empty());
+        assert!(default.collect_diagnostics().is_empty());
+
+        let config: Config = toml::from_str(
+            r#"
+[ui]
+pane_transforms = ["bidi", "sparkle"]
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.ui.pane_transforms, vec!["bidi", "sparkle"]);
+        assert_eq!(
+            config.collect_diagnostics(),
+            vec![
+                "ui.pane_transforms: unknown transform \"sparkle\" ignored; known: \"bidi\""
+                    .to_owned()
+            ]
+        );
     }
 
     #[test]
