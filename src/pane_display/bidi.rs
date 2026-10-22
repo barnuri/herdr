@@ -79,8 +79,7 @@ impl PaneRowTransform for BidiAutoLtr {
         if !changed {
             return false;
         }
-        scratch.cells.clear();
-        scratch.cells.extend_from_slice(segment);
+        super::copy_cells(&mut scratch.cells, segment);
         for (target, &source) in segment.iter_mut().zip(visual_to_logical.iter()) {
             target.clone_from(&scratch.cells[usize::from(source)]);
         }

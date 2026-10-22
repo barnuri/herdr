@@ -90,9 +90,11 @@ fn default_config_keeps_logical_order() {
 
 #[test]
 fn side_by_side_panes_reorder_independently() {
-    let mut surface = text_surface("אב cd", "PANE ", 5);
+    // The panes are separated by a plain space, which would not split a
+    // paragraph: reordering the whole row would draw "דג בא".
+    let mut surface = surface();
     surface.frame = FrameData::from_ratatui_buffer_with_hyperlinks(
-        &Buffer::with_lines(["אב│גד", "PA│NE"]),
+        &Buffer::with_lines(["אב גד", "PA NE"]),
         None,
         &[],
     );
@@ -113,7 +115,8 @@ fn side_by_side_panes_reorder_independently() {
                 .clone()
         })
         .collect();
-    assert_eq!(row, "בא│דג");
+    assert_eq!(row, "בא דג");
+    assert_eq!(state.display_maps.len(), 2);
 }
 
 #[test]
@@ -331,4 +334,117 @@ fn live_reload_toggles_transforms_and_reports_unknown_names() {
     state.config.apply_live_config(&Config::default(), &[], &[]);
     let frame = state.compose(COLS, ROWS).unwrap().frame;
     assert_eq!(pane_row(&frame, state.hits.panes[0].inner_rect, 0), "שלום");
+}
+
+#[test]
+fn context_menu_over_reordered_rows_uses_raw_columns() {
+    // Every pane row is Hebrew, so the menu opens on top of reordered rows.
+    let line = "שלום עולם ".repeat(4);
+    let lines: Vec<String> = (0..12).map(|_| line.clone()).collect();
+    let mut surface = surface();
+    surface.frame =
+        FrameData::from_ratatui_buffer_with_hyperlinks(&Buffer::with_lines(lines), None, &[]);
+    for pane in &mut surface.panes {
+        pane.rect.width = 40;
+        pane.rect.height = 12;
+        pane.inner_rect.width = 40;
+        pane.inner_rect.height = 12;
+    }
+    let mut state = shell(&bidi_config(), surface);
+    assert!(!state.display_maps.is_empty());
+    let pane = state.hits.panes[0].rect;
+    state.handle_raw_events(vec![RawInputEvent::Mouse(mouse(
+        MouseEventKind::Down(MouseButton::Right),
+        pane.x + 1,
+        pane.y,
+    ))]);
+    state.compose(COLS, ROWS).expect("pane context menu");
+    let split_index = match state.overlay.as_ref() {
+        Some(ClientShellOverlay::ContextMenu(menu)) => menu
+            .items()
+            .iter()
+            .position(|item| item.action == ClientContextMenuAction::SplitRight)
+            .expect("split right item"),
+        _ => panic!("pane context menu"),
+    };
+    let split = state.hits.context_menu_rows[split_index].0;
+    assert!(
+        state
+            .display_maps
+            .iter()
+            .any(|map| map.contains(split.x + 1, split.y)
+                && map.to_logical(split.x + 1) != split.x + 1),
+        "the menu item must sit over a reordered pane row"
+    );
+    let outcome = state.handle_raw_events(vec![RawInputEvent::Mouse(mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        split.x + 1,
+        split.y,
+    ))]);
+    let [ClientShellAction::Endpoint { request, .. }] = &outcome.actions[..] else {
+        panic!("the context menu item should run");
+    };
+    assert!(matches!(
+        &request.method,
+        crate::api::schema::Method::PaneSplit(params)
+            if params.direction == crate::api::schema::SplitDirection::Right
+    ));
+}
+
+#[test]
+#[ignore = "non-gating fixed-geometry pane display composition profile"]
+fn pane_display_render_scale_profile() {
+    let ascii = "x".repeat(120);
+    let hebrew = "שלום עולם abc 123 ".repeat(7)[..]
+        .chars()
+        .take(120)
+        .collect::<String>();
+    for count in [1u16, 15] {
+        for (content, line) in [("ascii", &ascii), ("hebrew", &hebrew)] {
+            for transforms in [false, true] {
+                let config = if transforms {
+                    bidi_config()
+                } else {
+                    Config::default()
+                };
+                let mut next = surface();
+                next.frame = FrameData::from_ratatui_buffer(
+                    &Buffer::with_lines(vec![line.clone(); 30]),
+                    None,
+                );
+                let template = next.panes[0].clone();
+                next.panes.clear();
+                for index in 0..count {
+                    let mut pane = template.clone();
+                    pane.pane_id = format!("pane_{index}");
+                    pane.inner_rect = SurfaceRect {
+                        x: if count == 1 { 0 } else { (index % 5) * 24 },
+                        y: if count == 1 { 0 } else { (index / 5) * 10 },
+                        width: if count == 1 { 120 } else { 24 },
+                        height: if count == 1 { 30 } else { 10 },
+                    };
+                    pane.rect = pane.inner_rect;
+                    next.panes.push(pane);
+                }
+                let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+                state.set_snapshot(Box::new(snapshot()));
+                state.set_pane_surface(next);
+                state.compose(146, 32).unwrap();
+                let mut samples = Vec::new();
+                for _ in 0..200 {
+                    let started = std::time::Instant::now();
+                    std::hint::black_box(state.compose(146, 32).unwrap());
+                    samples.push(started.elapsed().as_micros());
+                }
+                samples.sort_unstable();
+                eprintln!(
+                    "pane-display panes={count} content={content} bidi={transforms} \
+                     median_us={} p95_us={} reordered_rows={}",
+                    samples[100],
+                    samples[190],
+                    state.display_maps.len()
+                );
+            }
+        }
+    }
 }

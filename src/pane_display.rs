@@ -109,10 +109,12 @@ impl PaneDisplayChain {
         if len == 0 || len > usize::from(u16::MAX) || !self.affects(segment) {
             return None;
         }
-        scratch.original.clear();
-        scratch.original.extend_from_slice(segment);
-        let mut total: Vec<u16> = (0..len as u16).collect();
+        copy_cells(&mut scratch.original, segment);
+        let mut total = std::mem::take(&mut scratch.total);
+        total.clear();
+        total.extend(0..len as u16);
         let mut step = std::mem::take(&mut scratch.step);
+        let mut previous = std::mem::take(&mut scratch.previous);
         let mut changed = false;
         for transform in &self.0 {
             if !transform.affects(segment) {
@@ -127,35 +129,53 @@ impl PaneDisplayChain {
                 total.clear();
                 break;
             }
-            let previous = total.clone();
+            previous.clear();
+            previous.extend_from_slice(&total);
             for (target, &source) in total.iter_mut().zip(&step) {
                 *target = previous[usize::from(source)];
             }
         }
         scratch.step = step;
-        if !changed {
-            return None;
-        }
-        if !valid_permutation(&scratch.original, &total) {
+        scratch.previous = previous;
+        let result = if !changed {
+            None
+        } else if !valid_permutation(&scratch.original, &total, &mut scratch.seen) {
             crate::render_prof::event("pane_display.invalid_fallback");
             segment.clone_from_slice(&scratch.original);
-            return None;
-        }
-        if total.iter().enumerate().all(|(v, &l)| usize::from(l) == v) {
-            return None;
-        }
-        Some(total.into_boxed_slice())
+            None
+        } else if total.iter().enumerate().all(|(v, &l)| usize::from(l) == v) {
+            None
+        } else {
+            // The returned map is the only per-row allocation, and only for
+            // rows that moved.
+            Some(Box::from(total.as_slice()))
+        };
+        scratch.total = total;
+        result
     }
+}
+
+/// Copies `source` into `target`, reusing the existing cells' string buffers.
+pub(crate) fn copy_cells(target: &mut Vec<CellData>, source: &[CellData]) {
+    target.truncate(source.len());
+    let reused = target.len();
+    target.clone_from_slice(&source[..reused]);
+    target.extend_from_slice(&source[reused..]);
 }
 
 /// Checks that `visual_to_logical` is a bijection and that every spacer tail
 /// is still drawn directly after the cell that precedes it in logical order.
-fn valid_permutation(logical: &[CellData], visual_to_logical: &[u16]) -> bool {
+fn valid_permutation(
+    logical: &[CellData],
+    visual_to_logical: &[u16],
+    seen: &mut Vec<bool>,
+) -> bool {
     let len = logical.len();
     if visual_to_logical.len() != len {
         return false;
     }
-    let mut seen = vec![false; len];
+    seen.clear();
+    seen.resize(len, false);
     for &source in visual_to_logical {
         let source = usize::from(source);
         if source >= len || std::mem::replace(&mut seen[source], true) {
@@ -221,9 +241,14 @@ impl RowMap {
     }
 }
 
-/// Reusable buffers so composing a frame does not allocate per row.
+/// Reusable buffers kept across frames. After warm-up, rows no transform
+/// affects allocate nothing. Affected rows also allocate inside
+/// `unicode-bidi`, and rows that move allocate their stored column map.
 #[derive(Default)]
 pub(crate) struct Scratch {
+    total: Vec<u16>,
+    previous: Vec<u16>,
+    seen: Vec<bool>,
     text: String,
     units: Vec<bidi::Unit>,
     levels: Vec<unicode_bidi::Level>,

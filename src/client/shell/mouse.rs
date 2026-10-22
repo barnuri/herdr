@@ -326,7 +326,7 @@ impl ClientShellState {
             };
             self.update_selection_cursor_with_metrics(
                 &hit,
-                mouse.column,
+                self.content_column(mouse.column, mouse.row),
                 mouse.row,
                 Some(projected),
                 outcome,
@@ -681,7 +681,6 @@ impl ClientShellState {
     /// Hit-test order determines which overlapping control receives the event;
     /// the sidebar toggle takes precedence over the agent scrollbar beneath it.
     pub(super) fn handle_mouse(&mut self, mouse: MouseEvent, outcome: &mut ClientShellInput) {
-        let mouse = self.logical_mouse(mouse);
         self.update_link_hover(mouse, outcome);
         let point = (mouse.column, mouse.row);
         if self.mode == ClientShellMode::Navigate
@@ -963,7 +962,9 @@ impl ClientShellState {
                 .cloned()
             {
                 let viewport_row = mouse.row.saturating_sub(hit.inner_rect.y);
-                let col = mouse.column.saturating_sub(hit.inner_rect.x);
+                let col = self
+                    .content_column(mouse.column, mouse.row)
+                    .saturating_sub(hit.inner_rect.x);
                 let content_revision = self
                     .pane_surface
                     .as_ref()
@@ -1742,7 +1743,8 @@ impl ClientShellState {
         if mouse.kind == MouseEventKind::Drag(MouseButton::Left) {
             let selection_hit = self.active_selection_pane();
             if let Some(hit) = selection_hit {
-                self.update_selection_drag(&hit, mouse.column, mouse.row, outcome);
+                let column = self.content_column(mouse.column, mouse.row);
+                self.update_selection_drag(&hit, column, mouse.row, outcome);
                 // Consume every motion, but do not rebuild a frame for every intermediate position.
                 outcome.repaint |= !outcome.actions.is_empty()
                     || self.request_selection_drag_repaint(std::time::Instant::now());
@@ -2245,7 +2247,9 @@ impl ClientShellState {
                         let click = ClientPaneClick {
                             pane_id: hit.pane_id.clone(),
                             viewport_row: mouse.row.saturating_sub(hit.inner_rect.y),
-                            col: mouse.column.saturating_sub(hit.inner_rect.x),
+                            col: self
+                                .content_column(mouse.column, mouse.row)
+                                .saturating_sub(hit.inner_rect.x),
                             at: std::time::Instant::now(),
                         };
                         if mouse.modifiers.is_empty()
@@ -2260,13 +2264,14 @@ impl ClientShellState {
                                 outcome,
                             );
                         } else {
+                            let col = click.col;
                             if mouse.modifiers.is_empty() {
                                 self.last_pane_click = Some(click);
                             }
                             self.selection = Some(crate::selection::Selection::anchor(
                                 hit.pane_id.clone(),
                                 mouse.row.saturating_sub(hit.inner_rect.y),
-                                mouse.column.saturating_sub(hit.inner_rect.x),
+                                col,
                                 hit.scroll,
                             ));
                         }
@@ -2337,8 +2342,9 @@ impl ClientShellState {
     }
 
     fn pane_mouse_position(&self, hit: &PaneHit, mouse: MouseEvent) -> ClientMousePosition {
+        let content_column = self.content_column(mouse.column, mouse.row);
         let cell = ClientMousePosition::Cell {
-            column: mouse.column.saturating_sub(hit.inner_rect.x),
+            column: content_column.saturating_sub(hit.inner_rect.x),
             row: mouse.row.saturating_sub(hit.inner_rect.y),
         };
         if hit.sgr_pixel_mouse && hit.pixel_width > 0 && hit.pixel_height > 0 {
@@ -2349,9 +2355,13 @@ impl ClientShellState {
                         .and_then(|position| match position {
                             crate::input::mouse::Position::Pixels { x, y } => {
                                 Some(ClientMousePosition::Pixels {
-                                    x: self.logical_mouse_pixel_x(x, hit),
+                                    x: super::display::shift_pixel_x(
+                                        x,
+                                        hit,
+                                        i32::from(content_column) - i32::from(mouse.column),
+                                    ),
                                     y,
-                                    column: mouse.column.saturating_sub(hit.inner_rect.x),
+                                    column: content_column.saturating_sub(hit.inner_rect.x),
                                     row: mouse.row.saturating_sub(hit.inner_rect.y),
                                 })
                             }

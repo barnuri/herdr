@@ -1,13 +1,12 @@
-//! Applies pane display transforms to composed frames and maps mouse columns
-//! from the drawn (visual) order back to the pane's logical columns.
+//! Applies pane display transforms to composed frames and maps pane-content
+//! columns from the drawn (visual) order back to logical columns.
 
 use super::*;
 use crate::pane_display::{PaneDisplayChain, RowMap, Scratch};
-use crossterm::event::MouseEvent;
 
 /// Transforms each row of the pane drawn in `inner`, in screen coordinates.
 ///
-/// Rows listed in `skip_rows` are left alone, so the mode bar stays intact.
+/// The `skip_row` row is left alone, so the mode bar stays intact.
 /// The frame cursor follows its glyph when it sits on a reordered row.
 pub(super) fn apply_pane_display(
     chain: &PaneDisplayChain,
@@ -71,50 +70,38 @@ pub(super) fn graphics_overlap(
     })
 }
 
+/// Shifts a pane-relative pixel x by `column_shift` cells, keeping the
+/// pointer's offset inside its cell.
+pub(super) fn shift_pixel_x(x: u32, hit: &PaneHit, column_shift: i32) -> u32 {
+    if column_shift == 0 || hit.inner_rect.width == 0 {
+        return x;
+    }
+    let cell_width = i64::from(hit.pixel_width / u32::from(hit.inner_rect.width));
+    let shifted = i64::from(x) + i64::from(column_shift) * cell_width;
+    shifted.clamp(0, i64::from(hit.pixel_width.saturating_sub(1))) as u32
+}
+
 impl ClientShellState {
-    /// Rewrites a mouse event's column from the drawn position to the
-    /// logical column of the glyph under the pointer.
+    /// Logical screen column of the pane glyph drawn at (`column`, `row`).
     ///
-    /// Popup maps win while the pointer is inside the popup. Everything that
-    /// handles the event afterwards (selection, links, forwarded reports)
-    /// then works in logical columns.
-    pub(super) fn logical_mouse(&mut self, mouse: MouseEvent) -> MouseEvent {
-        self.mouse_column_shift = 0;
-        if self.display_maps.is_empty() && self.popup_display_maps.is_empty() {
-            return mouse;
-        }
-        let (x, y) = (mouse.column, mouse.row);
-        let in_popup = self.hits.popup.as_ref().is_some_and(|hit| {
-            x >= hit.rect.x
-                && x < hit.rect.x.saturating_add(hit.rect.width)
-                && y >= hit.rect.y
-                && y < hit.rect.y.saturating_add(hit.rect.height)
-        });
+    /// Only pane-content handling (forwarded mouse reports, selection, link
+    /// hover and activation) converts columns through this. Shell chrome,
+    /// menus, and overlays hit-test the raw pointer position. Popup maps win
+    /// while the pointer is inside the popup.
+    pub(super) fn content_column(&self, column: u16, row: u16) -> u16 {
+        let in_popup = self
+            .hits
+            .popup
+            .as_ref()
+            .is_some_and(|hit| super::contains(hit.rect, (column, row)));
         let maps = if in_popup {
             &self.popup_display_maps
         } else {
             &self.display_maps
         };
-        let Some(map) = maps.iter().find(|map| map.contains(x, y)) else {
-            return mouse;
-        };
-        let logical = map.to_logical(x);
-        self.mouse_column_shift = i32::from(logical) - i32::from(x);
-        MouseEvent {
-            column: logical,
-            ..mouse
-        }
-    }
-
-    /// Shifts a pane-relative pixel x by the column remap of the current
-    /// mouse event, keeping the pointer's offset inside its cell.
-    pub(super) fn logical_mouse_pixel_x(&self, x: u32, hit: &PaneHit) -> u32 {
-        if self.mouse_column_shift == 0 || hit.inner_rect.width == 0 {
-            return x;
-        }
-        let cell_width = i64::from(hit.pixel_width / u32::from(hit.inner_rect.width));
-        let shifted = i64::from(x) + i64::from(self.mouse_column_shift) * cell_width;
-        shifted.clamp(0, i64::from(hit.pixel_width.saturating_sub(1))) as u32
+        maps.iter()
+            .find(|map| map.contains(column, row))
+            .map_or(column, |map| map.to_logical(column))
     }
 
     /// Whether a surface patch could change a row the display transforms

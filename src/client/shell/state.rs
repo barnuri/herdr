@@ -902,8 +902,6 @@ pub(crate) struct ClientShellState {
     /// Column maps for the popup pane, consulted before tiled panes.
     pub(super) popup_display_maps: Vec<crate::pane_display::RowMap>,
     pub(super) display_scratch: crate::pane_display::Scratch,
-    /// Visual minus logical column of the mouse event being handled.
-    pub(super) mouse_column_shift: i32,
     pub(super) hits: ShellHitMap,
     pub(super) endpoints: Vec<ClientShellEndpoint>,
     pub(super) active_endpoint_id: ClientEndpointId,
@@ -1081,7 +1079,6 @@ impl ClientShellState {
             display_maps: Vec::new(),
             popup_display_maps: Vec::new(),
             display_scratch: crate::pane_display::Scratch::default(),
-            mouse_column_shift: 0,
             hits: ShellHitMap::default(),
             endpoints: vec![local_endpoint()],
             active_endpoint_id: ClientEndpointId::Local,

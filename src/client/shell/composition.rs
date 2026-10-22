@@ -154,8 +154,6 @@ impl ClientShellState {
     ) -> Option<crate::client::frame_output::ComposedFrame> {
         self.last_composed_at = Some(std::time::Instant::now());
         self.selection_repaint_deadline = None;
-        self.display_maps.clear();
-        self.popup_display_maps.clear();
         if self.last_composed_size != Some((cols, rows)) && self.mode == ClientShellMode::Navigate {
             self.reveal_navigation_workspace = true;
             self.reveal_mobile_workspace = true;
@@ -173,6 +171,8 @@ impl ClientShellState {
                     && self.navigation_target_valid(&pending.target)
             });
         if self.snapshot.is_none() || self.pane_surface.is_none() {
+            self.display_maps.clear();
+            self.popup_display_maps.clear();
             return Some(self.compose_unavailable(cols, rows).into());
         }
         let snapshot = self.snapshot.as_deref()?;
@@ -187,6 +187,10 @@ impl ClientShellState {
         if snapshot.revision != surface.projection_revision {
             return None;
         }
+        // A `None` above keeps the previous frame on screen, so its column
+        // maps stay valid until a new frame is built here.
+        self.display_maps.clear();
+        self.popup_display_maps.clear();
         let layout = self.layout(cols, rows);
         if self.last_tab_bar_width != Some(layout.tab_bar.width) {
             self.last_tab_bar_width = Some(layout.tab_bar.width);
