@@ -531,6 +531,8 @@ Each pane row is laid out with the Unicode Bidirectional Algorithm and a left-to
 
 No outer terminal setting is needed. At startup Herdr asks the outer terminal whether it reorders text itself (the ECMA-48 BiDi mode, `BDSM`). When it does, as WezTerm can, Herdr switches it to explicit mode so text is not reordered twice, and switches it back on exit. When the terminal reports that its BiDi mode is permanently set and cannot be switched, Herdr leaves pane text in logical order for that terminal to lay out. Terminals that do no bidirectional layout are left unchanged.
 
+An application that already draws its text in visual order can opt out for its own pane with the ECMA-48 BiDi mode sequence `CSI 8 l` (for example `printf '\e[8l'`), and opt back in with `CSI 8 h`. Herdr answers BiDi mode queries from pane applications, so a Herdr running inside a pane opts out automatically and nested sessions are not reordered twice.
+
 To draw pane text in logical order everywhere instead, turn the layout off:
 
 ```toml

@@ -460,6 +460,9 @@ impl ClientShellState {
         // highlights move with their glyphs.
         if self.config.lays_out_bidi() {
             for hit in &self.hits.panes {
+                if self.pane_bidi_explicit(&hit.pane_id) {
+                    continue;
+                }
                 if super::display::graphics_overlap(
                     self.graphics.scene(),
                     false,

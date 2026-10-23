@@ -152,6 +152,73 @@ fn side_by_side_panes_reorder_independently() {
     assert_eq!(state.display_maps.len(), 2);
 }
 
+fn snapshot_with_bidi_explicit(pane_ids: &[&str]) -> Box<crate::protocol::ClientShellSnapshot> {
+    let mut snapshot = snapshot();
+    let template = snapshot.panes[0].clone();
+    snapshot.panes = ["pane_1", "pane_2"]
+        .into_iter()
+        .map(|pane_id| crate::protocol::ClientShellPane {
+            pane_id: pane_id.into(),
+            bidi_explicit: pane_ids.contains(&pane_id),
+            ..template.clone()
+        })
+        .collect();
+    Box::new(snapshot)
+}
+
+#[test]
+fn panes_in_explicit_bidi_mode_are_not_reordered_again() {
+    // pane_1 sent CSI 8 l: it already draws visual order, as a nested Herdr
+    // does. pane_2 stays implicit and is still laid out.
+    let mut surface = surface();
+    surface.frame = FrameData::from_ratatui_buffer_with_hyperlinks(
+        &Buffer::with_lines(["אב גד", "PA NE"]),
+        None,
+        &[],
+    );
+    surface.panes[0].rect.width = 2;
+    surface.panes[0].inner_rect.width = 2;
+    let mut right = surface.panes[0].clone();
+    right.pane_id = "pane_2".into();
+    right.rect.x = 3;
+    right.inner_rect.x = 3;
+    surface.panes.push(right);
+    let panes = surface.panes.clone();
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&bidi_config()));
+    state.set_snapshot(snapshot_with_bidi_explicit(&["pane_1"]));
+    state.set_pane_surface(surface.clone());
+    let frame = state.compose(COLS, ROWS).unwrap().frame;
+    let left = state.hits.panes[0].inner_rect;
+    let right = state.hits.panes[1].inner_rect;
+    assert_eq!(pane_row(&frame, left, 0), "אב");
+    assert_eq!(pane_row(&frame, right, 0), "דג");
+    assert_eq!(state.display_maps.len(), 1);
+    assert!(!state.display_maps[0].contains(left.x, left.y));
+    // Patches on the explicit pane keep the fast path.
+    let mut left_patch = patch(cells("x"), 0, 0);
+    left_patch.panes = panes.clone();
+    assert!(matches!(
+        state.apply_pane_surface_patch(left_patch),
+        ClientPaneSurfacePatchOutcome::Applied(Some(_))
+    ));
+
+    // CSI 8 h returns the pane to implicit mode, so it is laid out again.
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&bidi_config()));
+    state.set_snapshot(snapshot_with_bidi_explicit(&["pane_1"]));
+    state.set_pane_surface(surface);
+    state.compose(COLS, ROWS).unwrap();
+    state.set_snapshot(snapshot_with_bidi_explicit(&[]));
+    let frame = state.compose(COLS, ROWS).unwrap().frame;
+    assert_eq!(pane_row(&frame, state.hits.panes[0].inner_rect, 0), "בא");
+    assert_eq!(state.display_maps.len(), 2);
+    let mut left_patch = patch(cells("x"), 0, 0);
+    left_patch.panes = panes;
+    assert!(matches!(
+        state.apply_pane_surface_patch(left_patch),
+        ClientPaneSurfacePatchOutcome::Applied(None)
+    ));
+}
+
 #[test]
 fn cursor_follows_its_glyph_on_reordered_rows() {
     let mut surface = text_surface("אבגד", "PANE", 4);

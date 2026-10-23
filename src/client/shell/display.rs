@@ -83,16 +83,20 @@ fn is_popup_placement(placement: &crate::protocol::SurfaceGraphicsPlacement) -> 
 }
 
 /// Column ranges `[start, end)` of each pane inner rect on surface row `y`
-/// that intersect `[x, x + len)`. Compose lays out each pane segment on its
+/// that intersect `[x, x + len)`, skipping panes in BiDi explicit mode. Compose lays out each pane segment on its
 /// own, so patch checks must look at the same segments.
-fn pane_segments(
-    panes: &[crate::protocol::PaneSurfacePane],
+fn pane_segments<'a>(
+    panes: &'a [crate::protocol::PaneSurfacePane],
     y: u16,
     x: u16,
     len: usize,
-) -> impl Iterator<Item = (usize, usize)> + '_ {
+    bidi_explicit: &'a impl Fn(&str) -> bool,
+) -> impl Iterator<Item = (usize, usize)> + 'a {
     let span_end = usize::from(x).saturating_add(len);
     panes.iter().filter_map(move |pane| {
+        if bidi_explicit(&pane.pane_id) {
+            return None;
+        }
         let inner = pane.inner_rect;
         let inside_row = y >= inner.y && y < inner.y.saturating_add(inner.height);
         let start = usize::from(inner.x);
@@ -135,6 +139,18 @@ impl ClientShellState {
             .map_or(column, |map| map.to_logical(column))
     }
 
+    /// Whether the endpoint reports that the pane application switched BiDi
+    /// to explicit mode (`CSI 8 l`). Such panes already draw visual order,
+    /// so their rows are never reordered again.
+    pub(super) fn pane_bidi_explicit(&self, pane_id: &str) -> bool {
+        self.snapshot.as_deref().is_some_and(|snapshot| {
+            snapshot
+                .panes
+                .iter()
+                .any(|pane| pane.bidi_explicit && pane.pane_id == pane_id)
+        })
+    }
+
     /// Visual screen column where the tiled pane glyph at logical
     /// (`column`, `row`) is drawn; the inverse of [`Self::content_column`].
     pub(super) fn visual_column(&self, column: u16, row: u16) -> u16 {
@@ -163,9 +179,10 @@ impl ClientShellState {
             &patch.panes
         };
         let width = usize::from(frame.width);
+        let bidi_explicit = |pane_id: &str| self.pane_bidi_explicit(pane_id);
         let old_affects = |y: u16, x: u16, len: usize| {
             let row = usize::from(y) * width;
-            pane_segments(&surface.panes, y, x, len).any(|(start, end)| {
+            pane_segments(&surface.panes, y, x, len, &bidi_explicit).any(|(start, end)| {
                 frame
                     .cells
                     .get(row + start..row + end.min(width))
@@ -173,13 +190,15 @@ impl ClientShellState {
             })
         };
         let new_affects = |row: &crate::protocol::PaneSurfacePatchRow| {
-            pane_segments(panes, row.y, row.x, row.cells.len()).any(|(start, end)| {
-                let from = start.saturating_sub(usize::from(row.x));
-                let to = (end - usize::from(row.x).min(end)).min(row.cells.len());
-                row.cells
-                    .get(from..to)
-                    .is_some_and(crate::pane_display::affects)
-            })
+            pane_segments(panes, row.y, row.x, row.cells.len(), &bidi_explicit).any(
+                |(start, end)| {
+                    let from = start.saturating_sub(usize::from(row.x));
+                    let to = (end - usize::from(row.x).min(end)).min(row.cells.len());
+                    row.cells
+                        .get(from..to)
+                        .is_some_and(crate::pane_display::affects)
+                },
+            )
         };
         patch
             .rows
