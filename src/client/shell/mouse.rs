@@ -235,8 +235,8 @@ impl ClientShellState {
             let (anchor_row, anchor_col) = selection.anchor_screen_pos(hit.inner_rect, metrics);
             anchor_row != row || self.visual_column(anchor_col, anchor_row) != column
         });
-        let column = self.selection_endpoint_column(hit, column, row);
-        self.update_selection_cursor_with_metrics(hit, column, row, metrics, outcome);
+        let endpoint = self.selection_endpoint_column(hit, column, row);
+        self.update_selection_cursor_with_metrics(hit, endpoint, row, metrics, outcome);
         let is_dragging = self
             .word_selection_gesture
             .as_ref()
@@ -293,12 +293,14 @@ impl ClientShellState {
                 offset_from_bottom,
                 ..metrics
             };
-            self.update_selection_cursor_with_metrics(hit, column, row, Some(projected), outcome);
+            self.update_selection_cursor_with_metrics(hit, endpoint, row, Some(projected), outcome);
             self.push_pane_scroll_offset(hit.pane_id.clone(), offset_from_bottom, outcome);
         }
         self.selection_autoscroll = Some(ClientSelectionAutoscroll {
             pane_id: hit.pane_id.clone(),
             direction,
+            // The visual pointer: BiDi layout can move a different glyph
+            // under it once the pane scrolls.
             last_mouse_column: column,
             last_mouse_row: row,
             inner_rect: hit.inner_rect,
@@ -352,6 +354,37 @@ impl ClientShellState {
             outcome.repaint = true;
         }
         true
+    }
+
+    /// Re-resolves the autoscrolling selection endpoint under the stationary
+    /// pointer once the displayed frame shows the autoscroll offset. Until
+    /// then the endpoint column was mapped through the row drawn there before
+    /// the scroll, and rows with different BiDi layouts map columns
+    /// differently.
+    fn remap_selection_autoscroll_endpoint(&mut self, outcome: &mut ClientShellInput) {
+        let Some(autoscroll) = self.selection_autoscroll.as_ref() else {
+            return;
+        };
+        let Some(hit) = self
+            .hits
+            .panes
+            .iter()
+            .find(|hit| {
+                hit.pane_id == autoscroll.pane_id && hit.inner_rect == autoscroll.inner_rect
+            })
+            .cloned()
+        else {
+            return;
+        };
+        let Some(displayed) = hit
+            .scroll
+            .filter(|metrics| metrics.offset_from_bottom == autoscroll.offset_from_bottom)
+        else {
+            return;
+        };
+        let (column, row) = (autoscroll.last_mouse_column, autoscroll.last_mouse_row);
+        let endpoint = self.selection_endpoint_column(&hit, column, row);
+        self.update_selection_cursor_with_metrics(&hit, endpoint, row, Some(displayed), outcome);
     }
 
     pub(super) fn request_selection_drag_repaint(&mut self, now: std::time::Instant) -> bool {
@@ -410,6 +443,7 @@ impl ClientShellState {
             self.stop_selection_autoscroll();
             return outcome;
         }
+        self.remap_selection_autoscroll_endpoint(&mut outcome);
         let next_offset = match autoscroll.direction {
             ClientSelectionAutoscrollDirection::Up => autoscroll
                 .offset_from_bottom
@@ -429,9 +463,14 @@ impl ClientShellState {
             max_offset_from_bottom: autoscroll.max_offset_from_bottom,
             viewport_rows: hit.scroll.map_or(0, |metrics| metrics.viewport_rows),
         };
-        self.update_selection_cursor_with_metrics(
+        let endpoint = self.selection_endpoint_column(
             &hit,
             autoscroll.last_mouse_column,
+            autoscroll.last_mouse_row,
+        );
+        self.update_selection_cursor_with_metrics(
+            &hit,
+            endpoint,
             autoscroll.last_mouse_row,
             Some(metrics),
             &mut outcome,
@@ -1766,6 +1805,9 @@ impl ClientShellState {
                     || self.request_selection_drag_repaint(std::time::Instant::now());
                 return;
             }
+        }
+        if mouse.kind == MouseEventKind::Up(MouseButton::Left) {
+            self.remap_selection_autoscroll_endpoint(outcome);
         }
         if mouse.kind == MouseEventKind::Up(MouseButton::Left)
             && self.word_selection_gesture.is_some()
