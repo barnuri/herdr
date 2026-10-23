@@ -188,6 +188,26 @@ fn mouse_selection_uses_logical_columns_and_highlights_the_selected_glyphs() {
 }
 
 #[test]
+fn selection_drag_outside_the_pane_maps_columns_through_the_selected_pane() {
+    let mut state = shell(&bidi_config(), text_surface("PANE", "אבגד", 4));
+    let inner = state.hits.panes[0].inner_rect;
+    // Bottom row draws "דגבא": ב (logical 1) at column 2, ד (logical 3) at column 0.
+    state.handle_raw_events(vec![RawInputEvent::Mouse(mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        inner.x + 2,
+        inner.y + 1,
+    ))]);
+    // Dragging below the pane, under its leftmost column, ends on ד.
+    state.handle_raw_events(vec![RawInputEvent::Mouse(mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        inner.x,
+        inner.y + inner.height + 1,
+    ))]);
+    let selection = state.selection.as_ref().expect("selection");
+    assert_eq!(selection.ordered_cells(), ((1, 1), (1, 3)));
+}
+
+#[test]
 fn forwarded_mouse_reports_and_link_clicks_use_logical_columns() {
     let mut surface = text_surface("אבגד", "PANE", 4);
     surface.panes[0].mouse_reporting = true;

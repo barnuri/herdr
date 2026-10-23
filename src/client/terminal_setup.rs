@@ -894,23 +894,28 @@ impl TerminalGuard {
     /// Holds a host that reorders text itself in explicit BiDi mode while this
     /// client reorders pane rows, so text is not reordered twice. Herdr only
     /// ever returns the host to implicit mode after switching it away.
+    /// Returns whether the host mode changed.
     pub(super) fn set_host_bidi_explicit(
         &self,
         writer: &mut impl io::Write,
         explicit: bool,
-    ) -> io::Result<()> {
+    ) -> io::Result<bool> {
         if self.host_bidi != Some(true) || self.restore_claimed.load(Ordering::Acquire) {
-            return Ok(());
+            return Ok(false);
         }
-        if self.host_bidi_explicit.swap(explicit, Ordering::AcqRel) == explicit {
-            return Ok(());
+        if self.host_bidi_explicit.load(Ordering::Acquire) == explicit {
+            return Ok(false);
         }
         writer.write_all(if explicit {
             HOST_BIDI_EXPLICIT
         } else {
             HOST_BIDI_IMPLICIT
         })?;
-        writer.flush()
+        writer.flush()?;
+        // Record the mode only once the host has it, so a failed switch is
+        // retried and restore does not undo a switch that never happened.
+        self.host_bidi_explicit.store(explicit, Ordering::Release);
+        Ok(true)
     }
 
     /// Re-sends the keyboard and input modes enabled at setup. A host that
@@ -1402,8 +1407,10 @@ mod tests {
         let mut guard = refresh_test_guard(true, true, None);
         guard.host_bidi = Some(true);
         let mut output = Vec::new();
-        guard.set_host_bidi_explicit(&mut output, true).unwrap();
-        guard.set_host_bidi_explicit(&mut output, true).unwrap();
+        // The result says whether the host mode changed, so a live reload
+        // knows to repaint rows drawn under the previous mode.
+        assert!(guard.set_host_bidi_explicit(&mut output, true).unwrap());
+        assert!(!guard.set_host_bidi_explicit(&mut output, true).unwrap());
         assert_eq!(output, b"\x1b[8l");
         assert_eq!(
             refresh_bytes(&guard, false, false),
@@ -1424,11 +1431,46 @@ mod tests {
             let mut guard = refresh_test_guard(true, true, None);
             guard.host_bidi = host_bidi;
             let mut output = Vec::new();
-            guard.set_host_bidi_explicit(&mut output, true).unwrap();
-            guard.set_host_bidi_explicit(&mut output, false).unwrap();
+            assert!(!guard.set_host_bidi_explicit(&mut output, true).unwrap());
+            assert!(!guard.set_host_bidi_explicit(&mut output, false).unwrap());
             assert!(output.is_empty(), "host_bidi {host_bidi:?}");
             assert!(!guard.host_bidi_explicit.load(Ordering::Acquire));
         }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn host_bidi_explicit_mode_is_recorded_only_after_the_host_write_succeeds() {
+        struct FailingWriter {
+            fail_flush: bool,
+        }
+        impl io::Write for FailingWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                if self.fail_flush {
+                    Ok(buf.len())
+                } else {
+                    Err(io::Error::other("write failed"))
+                }
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Err(io::Error::other("flush failed"))
+            }
+        }
+
+        let mut guard = refresh_test_guard(true, true, None);
+        guard.host_bidi = Some(true);
+        for fail_flush in [false, true] {
+            assert!(guard
+                .set_host_bidi_explicit(&mut FailingWriter { fail_flush }, true)
+                .is_err());
+            assert!(!guard.host_bidi_explicit.load(Ordering::Acquire));
+        }
+        // The failed switch is retried rather than treated as already applied,
+        // and restore does not emit implicit mode for a switch that never landed.
+        let mut output = Vec::new();
+        assert!(guard.set_host_bidi_explicit(&mut output, true).unwrap());
+        assert_eq!(output, b"\x1b[8l");
+        assert!(guard.host_bidi_explicit.load(Ordering::Acquire));
     }
 
     #[test]

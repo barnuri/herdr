@@ -1743,7 +1743,17 @@ impl ClientShellState {
         if mouse.kind == MouseEventKind::Drag(MouseButton::Left) {
             let selection_hit = self.active_selection_pane();
             if let Some(hit) = selection_hit {
-                let column = self.content_column(mouse.column, mouse.row);
+                // Map the column through the selected pane's rows even when the
+                // pointer leaves the pane; the raw row still drives autoscroll.
+                let inner = hit.inner_rect;
+                let column = self.content_column(
+                    mouse
+                        .column
+                        .clamp(inner.x, inner.x + inner.width.saturating_sub(1)),
+                    mouse
+                        .row
+                        .clamp(inner.y, inner.y + inner.height.saturating_sub(1)),
+                );
                 self.update_selection_drag(&hit, column, mouse.row, outcome);
                 // Consume every motion, but do not rebuild a frame for every intermediate position.
                 outcome.repaint |= !outcome.actions.is_empty()
