@@ -135,6 +135,15 @@ impl ClientShellState {
             .map_or(column, |map| map.to_logical(column))
     }
 
+    /// Visual screen column where the tiled pane glyph at logical
+    /// (`column`, `row`) is drawn; the inverse of [`Self::content_column`].
+    pub(super) fn visual_column(&self, column: u16, row: u16) -> u16 {
+        self.display_maps
+            .iter()
+            .find(|map| map.contains(column, row))
+            .map_or(column, |map| map.to_visual(column))
+    }
+
     /// Whether a surface patch could change a row BiDi layout reorders. Such patches recompose instead of taking the span fast path,
     /// because the forwarded span would land on logical columns.
     pub(super) fn patch_touches_display_rows(

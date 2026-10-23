@@ -208,6 +208,46 @@ fn selection_drag_outside_the_pane_maps_columns_through_the_selected_pane() {
 }
 
 #[test]
+fn dragging_past_the_pane_edge_from_its_last_cell_selects_that_cell() {
+    // The clamped endpoint stays on the anchor cell, so only the raw pointer
+    // movement can turn the press into a drag.
+    for (mut config, line, column) in [
+        (logical_config(), "abcd", 3),
+        (bidi_config(), "abcd", 3),
+        // Visual "דגבא": the rightmost cell draws א, logical column 0.
+        (bidi_config(), "אבגד", 0),
+    ] {
+        config.ui.copy_on_select = false;
+        let mut state = shell(&config, text_surface(line, "PANE", 4));
+        let inner = state.hits.panes[0].inner_rect;
+        let right = inner.x + inner.width - 1;
+        state.handle_raw_events(vec![RawInputEvent::Mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            right,
+            inner.y,
+        ))]);
+        for kind in [
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Left),
+        ] {
+            state.handle_raw_events(vec![RawInputEvent::Mouse(mouse(kind, right + 3, inner.y))]);
+        }
+        let selection = state.selection.as_ref().unwrap_or_else(|| {
+            panic!(
+                "{line:?} bidi={}: release kept no selection",
+                config.ui.bidi
+            )
+        });
+        assert!(!selection.is_just_click(), "{line:?}");
+        assert_eq!(
+            selection.ordered_cells(),
+            ((0, column), (0, column)),
+            "{line:?}"
+        );
+    }
+}
+
+#[test]
 fn forwarded_mouse_reports_and_link_clicks_use_logical_columns() {
     let mut surface = text_surface("אבגד", "PANE", 4);
     surface.panes[0].mouse_reporting = true;

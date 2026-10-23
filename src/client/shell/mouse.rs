@@ -203,6 +203,19 @@ impl ClientShellState {
         }
     }
 
+    /// Logical screen column of the selected pane's glyph under the pointer.
+    /// The pointer is clamped into the pane first, so a drag outside it still
+    /// maps through the pane row it extends.
+    fn selection_endpoint_column(&self, hit: &PaneHit, column: u16, row: u16) -> u16 {
+        let inner = hit.inner_rect;
+        self.content_column(
+            column.clamp(inner.x, inner.x + inner.width.saturating_sub(1)),
+            row.clamp(inner.y, inner.y + inner.height.saturating_sub(1)),
+        )
+    }
+
+    /// Extends the selection to the pointer at visual (`column`, `row`), which
+    /// may lie outside the pane.
     fn update_selection_drag(
         &mut self,
         hit: &PaneHit,
@@ -215,10 +228,14 @@ impl ClientShellState {
             .selection
             .as_ref()
             .is_some_and(crate::selection::Selection::is_dragging);
+        // Movement compares the raw pointer with the anchor glyph's drawn
+        // position. The clamped, remapped endpoint can equal the anchor while
+        // the pointer has left it, for example past the pane's right edge.
         let moved_from_anchor = self.selection.as_ref().is_some_and(|selection| {
             let (anchor_row, anchor_col) = selection.anchor_screen_pos(hit.inner_rect, metrics);
-            anchor_row != row || anchor_col != column
+            anchor_row != row || self.visual_column(anchor_col, anchor_row) != column
         });
+        let column = self.selection_endpoint_column(hit, column, row);
         self.update_selection_cursor_with_metrics(hit, column, row, metrics, outcome);
         let is_dragging = self
             .word_selection_gesture
@@ -1743,18 +1760,7 @@ impl ClientShellState {
         if mouse.kind == MouseEventKind::Drag(MouseButton::Left) {
             let selection_hit = self.active_selection_pane();
             if let Some(hit) = selection_hit {
-                // Map the column through the selected pane's rows even when the
-                // pointer leaves the pane; the raw row still drives autoscroll.
-                let inner = hit.inner_rect;
-                let column = self.content_column(
-                    mouse
-                        .column
-                        .clamp(inner.x, inner.x + inner.width.saturating_sub(1)),
-                    mouse
-                        .row
-                        .clamp(inner.y, inner.y + inner.height.saturating_sub(1)),
-                );
-                self.update_selection_drag(&hit, column, mouse.row, outcome);
+                self.update_selection_drag(&hit, mouse.column, mouse.row, outcome);
                 // Consume every motion, but do not rebuild a frame for every intermediate position.
                 outcome.repaint |= !outcome.actions.is_empty()
                     || self.request_selection_drag_repaint(std::time::Instant::now());
