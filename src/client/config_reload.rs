@@ -56,8 +56,7 @@ pub(super) fn apply_reload(
     let (frame, resize) = if let Some(shell) = state.shell.as_mut() {
         let previous_size = shell.surface_size(state.reported_size.0, state.reported_size.1);
         shell.reload_client_config();
-        match terminal_guard.set_host_bidi_explicit(&mut io::stdout(), shell.pane_display_enabled())
-        {
+        match terminal_guard.set_host_bidi_explicit(&mut io::stdout(), shell.bidi_enabled()) {
             // The host keeps rows drawn before the switch in their old
             // order, so the next frame repaints in full.
             Ok(true) => state.repaint_pending = true,

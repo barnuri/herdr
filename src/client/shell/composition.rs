@@ -456,9 +456,9 @@ impl ClientShellState {
                 }
             }
         }
-        // Display transforms run after every logical highlight is stamped, so
+        // BiDi layout runs after every logical highlight is stamped, so
         // highlights move with their glyphs.
-        if !self.config.pane_display.is_empty() {
+        if self.config.bidi {
             for hit in &self.hits.panes {
                 if super::display::graphics_overlap(
                     self.graphics.scene(),
@@ -469,7 +469,6 @@ impl ClientShellState {
                     continue;
                 }
                 super::display::apply_pane_display(
-                    &self.config.pane_display,
                     &mut self.display_scratch,
                     &mut self.display_maps,
                     &mut frame,
@@ -608,14 +607,15 @@ impl ClientShellState {
                 ratatui::widgets::Widget::render(block, geometry.outer, &mut composed);
                 frame.replace_from_ratatui_buffer_preserving_effects(&composed, None);
                 blit_pane_surface(&mut frame, &popup.frame, geometry.inner);
-                if !super::display::graphics_overlap(
-                    self.graphics.scene(),
-                    true,
-                    geometry.inner,
-                    geometry.inner,
-                ) {
+                if self.config.bidi
+                    && !super::display::graphics_overlap(
+                        self.graphics.scene(),
+                        true,
+                        geometry.inner,
+                        geometry.inner,
+                    )
+                {
                     super::display::apply_pane_display(
-                        &self.config.pane_display,
                         &mut self.display_scratch,
                         &mut self.popup_display_maps,
                         &mut frame,

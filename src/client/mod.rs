@@ -202,9 +202,9 @@ fn run_client_with_mode(
             .with_process_endpoint_preferences(&socket_path)
     });
     let mouse_capture = loaded_config.config.ui.mouse_capture;
-    let pane_display = shell_config
+    let bidi = shell_config
         .as_ref()
-        .is_some_and(shell::ClientShellConfig::pane_display_enabled);
+        .is_some_and(shell::ClientShellConfig::bidi_enabled);
     let mouse_scroll_lines = loaded_config.config.ui.mouse_scroll_lines();
     let redraw_on_focus_gained = loaded_config.config.ui.redraw_on_focus_gained;
     let host_cursor = loaded_config.config.ui.host_cursor;
@@ -266,7 +266,7 @@ fn run_client_with_mode(
     let mut terminal_guard = if direct_attach {
         setup_direct_attach_terminal(mouse_capture)
     } else {
-        setup_terminal(mouse_capture, pane_display)
+        setup_terminal(mouse_capture, bidi)
     }
     .map_err(|err| {
         eprintln!("herdr: failed to set up terminal: {err}");

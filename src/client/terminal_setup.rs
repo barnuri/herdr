@@ -27,12 +27,12 @@ use super::frame_output::clear_received_kitty_graphics;
 
 /// Sets up the terminal for client mode (raw mode, optional mouse, keyboard enhancements).
 ///
-/// `pane_display` says whether this client reorders pane rows itself; a host
-/// that reorders text too is then switched to explicit BiDi mode.
+/// `bidi` says whether this client lays out pane rows in BiDi visual order
+/// itself; a host that reorders text too is then switched to explicit mode.
 ///
 /// Returns a guard that restores the terminal when dropped.
-pub(super) fn setup_terminal(mouse_capture: bool, pane_display: bool) -> io::Result<TerminalGuard> {
-    setup_terminal_with_capabilities(true, mouse_capture, pane_display)
+pub(super) fn setup_terminal(mouse_capture: bool, bidi: bool) -> io::Result<TerminalGuard> {
+    setup_terminal_with_capabilities(true, mouse_capture, bidi)
 }
 
 /// Sets up a direct attach terminal.
@@ -48,7 +48,7 @@ pub(super) fn setup_direct_attach_terminal(mouse_capture: bool) -> io::Result<Te
 pub(super) fn setup_terminal_with_capabilities(
     enable_client_protocols: bool,
     mouse_capture: bool,
-    pane_display: bool,
+    bidi: bool,
 ) -> io::Result<TerminalGuard> {
     ratatui::init();
     let mut terminal_guard = TerminalGuard {
@@ -135,7 +135,7 @@ pub(super) fn setup_terminal_with_capabilities(
     terminal_guard.buffered_host_input = buffered_host_input;
     if enable_client_protocols {
         terminal_guard.host_bidi = host_probe.host_bidi;
-        terminal_guard.set_host_bidi_explicit(&mut io::stdout(), pane_display)?;
+        terminal_guard.set_host_bidi_explicit(&mut io::stdout(), bidi)?;
     }
     Ok(terminal_guard)
 }
@@ -1403,7 +1403,7 @@ mod tests {
 
     #[cfg(not(windows))]
     #[test]
-    fn host_bidi_explicit_mode_follows_pane_display_and_survives_refresh() {
+    fn host_bidi_explicit_mode_follows_the_bidi_setting_and_survives_refresh() {
         let mut guard = refresh_test_guard(true, true, None);
         guard.host_bidi = Some(true);
         let mut output = Vec::new();
@@ -1416,7 +1416,7 @@ mod tests {
             refresh_bytes(&guard, false, false),
             b"\x1b[8l\x1b[<1u\x1b[>7u\x1b[?2004h"
         );
-        // A live reload that turns transforms off hands reordering back.
+        // A live reload that turns BiDi layout off hands reordering back.
         output.clear();
         guard.set_host_bidi_explicit(&mut output, false).unwrap();
         guard.set_host_bidi_explicit(&mut output, false).unwrap();

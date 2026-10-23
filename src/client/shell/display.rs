@@ -1,24 +1,20 @@
-//! Applies pane display transforms to composed frames and maps pane-content
+//! Lays out composed pane rows in BiDi visual order and maps pane-content
 //! columns from the drawn (visual) order back to logical columns.
 
 use super::*;
-use crate::pane_display::{PaneDisplayChain, RowMap, Scratch};
+use crate::pane_display::{RowMap, Scratch};
 
-/// Transforms each row of the pane drawn in `inner`, in screen coordinates.
+/// Lays out each row of the pane drawn in `inner`, in screen coordinates.
 ///
 /// The `skip_row` row is left alone, so the mode bar stays intact.
 /// The frame cursor follows its glyph when it sits on a reordered row.
 pub(super) fn apply_pane_display(
-    chain: &PaneDisplayChain,
     scratch: &mut Scratch,
     maps: &mut Vec<RowMap>,
     frame: &mut FrameData,
     inner: Rect,
     skip_row: Option<u16>,
 ) {
-    if chain.is_empty() {
-        return;
-    }
     let width = usize::from(frame.width);
     let right = inner.x.saturating_add(inner.width).min(frame.width);
     if inner.x >= right {
@@ -35,7 +31,7 @@ pub(super) fn apply_pane_display(
         let Some(segment) = frame.cells.get_mut(start..end) else {
             continue;
         };
-        let Some(visual_to_logical) = chain.apply_segment(segment, scratch) else {
+        let Some(visual_to_logical) = crate::pane_display::layout_segment(segment, scratch) else {
             continue;
         };
         crate::render_prof::counter("pane_display.rows_reordered", 1);
@@ -87,7 +83,7 @@ fn is_popup_placement(placement: &crate::protocol::SurfaceGraphicsPlacement) -> 
 }
 
 /// Column ranges `[start, end)` of each pane inner rect on surface row `y`
-/// that intersect `[x, x + len)`. Compose transforms each pane segment on its
+/// that intersect `[x, x + len)`. Compose lays out each pane segment on its
 /// own, so patch checks must look at the same segments.
 fn pane_segments(
     panes: &[crate::protocol::PaneSurfacePane],
@@ -139,15 +135,13 @@ impl ClientShellState {
             .map_or(column, |map| map.to_logical(column))
     }
 
-    /// Whether a surface patch could change a row the display transforms
-    /// reorder. Such patches recompose instead of taking the span fast path,
+    /// Whether a surface patch could change a row BiDi layout reorders. Such patches recompose instead of taking the span fast path,
     /// because the forwarded span would land on logical columns.
     pub(super) fn patch_touches_display_rows(
         &self,
         patch: &crate::protocol::PaneSurfacePatch,
     ) -> bool {
-        let chain = &self.config.pane_display;
-        if chain.is_empty() {
+        if !self.config.bidi {
             return false;
         }
         let Some(surface) = self.pane_surface.as_ref() else {
@@ -166,7 +160,7 @@ impl ClientShellState {
                 frame
                     .cells
                     .get(row + start..row + end.min(width))
-                    .is_some_and(|segment| chain.affects(segment))
+                    .is_some_and(crate::pane_display::affects)
             })
         };
         let new_affects = |row: &crate::protocol::PaneSurfacePatchRow| {
@@ -175,7 +169,7 @@ impl ClientShellState {
                 let to = (end - usize::from(row.x).min(end)).min(row.cells.len());
                 row.cells
                     .get(from..to)
-                    .is_some_and(|segment| chain.affects(segment))
+                    .is_some_and(crate::pane_display::affects)
             })
         };
         patch

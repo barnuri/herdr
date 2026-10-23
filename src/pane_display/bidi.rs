@@ -9,13 +9,11 @@
 
 use unicode_bidi::{BidiClass, Level, ParagraphBidiInfo};
 
-use super::{PaneRowTransform, Scratch};
+use super::Scratch;
 use crate::protocol::CellData;
 
 /// Kitty graphics placeholder; rows carrying images are never reordered.
 const KITTY_PLACEHOLDER: char = '\u{10EEEE}';
-
-pub(crate) struct BidiAutoLtr;
 
 /// A grapheme cell plus the spacer-tail cells that follow it.
 pub(super) struct Unit {
@@ -24,67 +22,65 @@ pub(super) struct Unit {
     text_offset: usize,
 }
 
-impl PaneRowTransform for BidiAutoLtr {
-    fn name(&self) -> &'static str {
-        "bidi"
+/// Whether `segment` holds right-to-left text that may move. Does not
+/// allocate; rows with skip cells or Kitty image placeholders never move.
+pub(super) fn affects(segment: &[CellData]) -> bool {
+    // Every scalar below U+0580 has a UTF-8 lead byte below 0xD6, so
+    // ASCII and Latin rows cost one byte compare per symbol byte.
+    if !segment
+        .iter()
+        .any(|cell| cell.symbol.bytes().any(|byte| byte >= 0xD6))
+    {
+        return false;
     }
-
-    fn affects(&self, segment: &[CellData]) -> bool {
-        // Every scalar below U+0580 has a UTF-8 lead byte below 0xD6, so
-        // ASCII and Latin rows cost one byte compare per symbol byte.
-        if !segment
-            .iter()
-            .any(|cell| cell.symbol.bytes().any(|byte| byte >= 0xD6))
-        {
+    let mut right_to_left = false;
+    for cell in segment {
+        if cell.skip {
             return false;
         }
-        let mut right_to_left = false;
-        for cell in segment {
-            if cell.skip {
+        for c in cell.symbol.chars() {
+            if c == KITTY_PLACEHOLDER {
                 return false;
             }
-            for c in cell.symbol.chars() {
-                if c == KITTY_PLACEHOLDER {
-                    return false;
-                }
-                right_to_left |= !c.is_ascii() && starts_right_to_left(c);
-            }
+            right_to_left |= !c.is_ascii() && starts_right_to_left(c);
         }
-        right_to_left
     }
+    right_to_left
+}
 
-    fn apply(
-        &self,
-        segment: &mut [CellData],
-        visual_to_logical: &mut Vec<u16>,
-        scratch: &mut Scratch,
-    ) -> bool {
-        let len = segment.len();
-        visual_to_logical.clear();
-        visual_to_logical.extend(0..len as u16);
-        let mut changed = false;
-        let mut start = 0;
-        while start < len {
-            if is_box_drawing(&segment[start]) {
-                start += 1;
-                continue;
-            }
-            let mut end = start;
-            while end < len && !is_box_drawing(&segment[end]) {
-                end += 1;
-            }
-            changed |= reorder_paragraph(segment, start..end, visual_to_logical, scratch);
-            start = end;
+/// Rewrites `segment` in visual order and writes the visual-to-logical
+/// column map into `visual_to_logical`, one entry per cell. Returns `false`
+/// when nothing changed.
+pub(super) fn reorder(
+    segment: &mut [CellData],
+    visual_to_logical: &mut Vec<u16>,
+    scratch: &mut Scratch,
+) -> bool {
+    let len = segment.len();
+    visual_to_logical.clear();
+    visual_to_logical.extend(0..len as u16);
+    let mut changed = false;
+    let mut start = 0;
+    while start < len {
+        if is_box_drawing(&segment[start]) {
+            start += 1;
+            continue;
         }
-        if !changed {
-            return false;
+        let mut end = start;
+        while end < len && !is_box_drawing(&segment[end]) {
+            end += 1;
         }
-        super::copy_cells(&mut scratch.cells, segment);
-        for (target, &source) in segment.iter_mut().zip(visual_to_logical.iter()) {
-            target.clone_from(&scratch.cells[usize::from(source)]);
-        }
-        true
+        changed |= reorder_paragraph(segment, start..end, visual_to_logical, scratch);
+        start = end;
     }
+    if !changed {
+        return false;
+    }
+    super::copy_cells(&mut scratch.cells, segment);
+    for (target, &source) in segment.iter_mut().zip(visual_to_logical.iter()) {
+        target.clone_from(&scratch.cells[usize::from(source)]);
+    }
+    true
 }
 
 /// Resolves one paragraph, mirrors brackets at right-to-left levels in

@@ -90,21 +90,6 @@ pub(crate) fn test_config_env_lock() -> &'static std::sync::Mutex<()> {
     LOCK.get_or_init(|| std::sync::Mutex::new(()))
 }
 
-/// Reports `[ui] pane_transforms` entries that name no built-in transform.
-pub(crate) fn pane_transforms_diagnostics(names: &[String]) -> Vec<String> {
-    let (_, unknown) = crate::pane_display::PaneDisplayChain::from_names(names);
-    let known = crate::pane_display::builtin_names()
-        .map(|name| format!("\"{name}\""))
-        .collect::<Vec<_>>()
-        .join(", ");
-    unknown
-        .into_iter()
-        .map(|name| {
-            format!("ui.pane_transforms: unknown transform \"{name}\" ignored; known: {known}")
-        })
-        .collect()
-}
-
 impl Config {
     pub fn should_show_onboarding(&self) -> bool {
         self.onboarding.unwrap_or(true)
@@ -135,7 +120,6 @@ impl Config {
             .chain(self.theme.diagnostics())
             .chain(self.ui.sound.diagnostics())
             .chain(tab_bar_right_diagnostics(&self.ui.tab_bar_right))
-            .chain(pane_transforms_diagnostics(&self.ui.pane_transforms))
             .chain(window_title_diagnostics(&self.ui.window_title))
             .chain(self.invalid_sidebar_bounds_diagnostic())
             .chain(self.invalid_headless_size_diagnostic())

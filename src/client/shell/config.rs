@@ -68,8 +68,8 @@ impl ClientShellState {
         }
     }
 
-    pub(crate) fn pane_display_enabled(&self) -> bool {
-        self.config.pane_display_enabled()
+    pub(crate) fn bidi_enabled(&self) -> bool {
+        self.config.bidi_enabled()
     }
 
     pub(crate) fn reload_client_config(&mut self) {
@@ -155,10 +155,7 @@ impl ClientShellConfig {
             mouse_scroll_lines: config.ui.mouse_scroll_lines(),
             right_click_passthrough_modifiers: config.ui.right_click_passthrough_modifiers(),
             redraw_on_focus_gained: config.ui.redraw_on_focus_gained,
-            pane_display: crate::pane_display::PaneDisplayChain::from_names(
-                &config.ui.pane_transforms,
-            )
-            .0,
+            bidi: config.ui.bidi,
             switch_ascii_input_source_in_prefix: config
                 .experimental
                 .switch_ascii_input_source_in_prefix,
@@ -186,9 +183,9 @@ impl ClientShellConfig {
         self
     }
 
-    /// Whether this client reorders pane rows before drawing them.
-    pub(crate) fn pane_display_enabled(&self) -> bool {
-        !self.pane_display.is_empty()
+    /// Whether this client lays out pane rows in BiDi visual order.
+    pub(crate) fn bidi_enabled(&self) -> bool {
+        self.bidi
     }
 
     pub(crate) fn uses_endpoint_keybindings(&self) -> bool {
@@ -354,11 +351,7 @@ impl ClientShellConfig {
             } else {
                 let ui = &config.ui;
                 diagnostics.extend(ui.sound.diagnostics());
-                diagnostics.extend(crate::config::pane_transforms_diagnostics(
-                    &ui.pane_transforms,
-                ));
-                self.pane_display =
-                    crate::pane_display::PaneDisplayChain::from_names(&ui.pane_transforms).0;
+                self.bidi = ui.bidi;
                 self.sidebar_width = ui.sidebar_width;
                 self.sidebar_min_width = ui.sidebar_min_width;
                 self.sidebar_max_width = ui.sidebar_max_width;

@@ -5,13 +5,13 @@ const ROWS: u16 = 20;
 
 fn bidi_config() -> Config {
     let mut config = Config::default();
-    config.ui.pane_transforms = vec!["bidi".into()];
+    config.ui.bidi = true;
     config
 }
 
 fn logical_config() -> Config {
     let mut config = Config::default();
-    config.ui.pane_transforms = Vec::new();
+    config.ui.bidi = false;
     config
 }
 
@@ -87,17 +87,17 @@ fn bidi_reorders_pane_rows_and_leaves_everything_else_identical() {
 }
 
 #[test]
-fn default_config_reorders_and_empty_transforms_keep_logical_order() {
+fn default_config_reorders_and_disabled_bidi_keeps_logical_order() {
     let mut state = shell(&Config::default(), text_surface("שלום", "PANE", 4));
     let frame = state.compose(COLS, ROWS).unwrap().frame;
     assert_eq!(pane_row(&frame, state.hits.panes[0].inner_rect, 0), "םולש");
-    assert!(state.pane_display_enabled());
+    assert!(state.bidi_enabled());
 
     let mut state = shell(&logical_config(), text_surface("שלום", "PANE", 4));
     let frame = state.compose(COLS, ROWS).unwrap().frame;
     assert_eq!(pane_row(&frame, state.hits.panes[0].inner_rect, 0), "שלום");
     assert!(state.display_maps.is_empty());
-    assert!(!state.pane_display_enabled());
+    assert!(!state.bidi_enabled());
 }
 
 #[test]
@@ -326,7 +326,7 @@ fn patches_on_right_to_left_rows_recompose() {
         ClientPaneSurfacePatchOutcome::Applied(None)
     ));
 
-    // Without transforms the same patch keeps the fast path.
+    // With BiDi layout off the same patch keeps the fast path.
     let mut state = shell(&logical_config(), text_surface("א x", "PANE", 4));
     assert!(matches!(
         state.apply_pane_surface_patch(patch(cells("1"), 2, 0)),
@@ -352,20 +352,18 @@ fn popup_rows_reorder_inside_the_popup_only() {
 }
 
 #[test]
-fn live_reload_toggles_transforms_and_reports_unknown_names() {
+fn live_reload_toggles_bidi_layout() {
     let mut state = shell(&logical_config(), text_surface("שלום", "PANE", 4));
-    let mut config = bidi_config();
-    config.ui.pane_transforms.push("rainbow".into());
-    let diagnostics = state.config.apply_live_config(&config, &[], &[]);
-    assert!(diagnostics
-        .iter()
-        .any(|diagnostic| diagnostic.contains("unknown transform \"rainbow\"")));
+    let diagnostics = state.config.apply_live_config(&bidi_config(), &[], &[]);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert!(state.bidi_enabled());
     let frame = state.compose(COLS, ROWS).unwrap().frame;
     assert_eq!(pane_row(&frame, state.hits.panes[0].inner_rect, 0), "םולש");
 
     state.config.apply_live_config(&logical_config(), &[], &[]);
     let frame = state.compose(COLS, ROWS).unwrap().frame;
     assert_eq!(pane_row(&frame, state.hits.panes[0].inner_rect, 0), "שלום");
+    assert!(state.display_maps.is_empty());
 }
 
 #[test]
@@ -433,8 +431,8 @@ fn pane_display_render_scale_profile() {
         .collect::<String>();
     for count in [1u16, 15] {
         for (content, line) in [("ascii", &ascii), ("hebrew", &hebrew)] {
-            for transforms in [false, true] {
-                let config = if transforms {
+            for bidi in [false, true] {
+                let config = if bidi {
                     bidi_config()
                 } else {
                     logical_config()
@@ -470,7 +468,7 @@ fn pane_display_render_scale_profile() {
                 }
                 samples.sort_unstable();
                 eprintln!(
-                    "pane-display panes={count} content={content} bidi={transforms} \
+                    "pane-display panes={count} content={content} bidi={bidi} \
                      median_us={} p95_us={} reordered_rows={}",
                     samples[100],
                     samples[190],

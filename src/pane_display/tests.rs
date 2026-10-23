@@ -23,17 +23,16 @@ fn symbols(cells: &[CellData]) -> Vec<&str> {
     cells.iter().map(|cell| cell.symbol.as_str()).collect()
 }
 
-fn bidi_chain() -> PaneDisplayChain {
-    let (chain, unknown) = PaneDisplayChain::from_names(&["bidi".to_owned()]);
-    assert!(unknown.is_empty());
-    chain
+/// Lays out `cells` and returns the column map when cells moved.
+fn layout(cells: &mut [CellData]) -> Option<Box<[u16]>> {
+    layout_segment(cells, &mut Scratch::default())
 }
 
-/// Applies the BiDi chain and checks the returned map against the cells.
+/// Lays out `input` and checks the returned map against the cells.
 fn visual(input: &str) -> String {
     let logical = row(input);
     let mut cells = logical.clone();
-    if let Some(map) = bidi_chain().apply_segment(&mut cells, &mut Scratch::default()) {
+    if let Some(map) = layout(&mut cells) {
         assert_is_permutation(&map);
         let row_map = RowMap::new(0, 0, map.clone());
         for (visual, &source) in map.iter().enumerate() {
@@ -80,25 +79,23 @@ fn numbers_after_hebrew_and_trailing_padding() {
 #[test]
 fn combining_marks_stay_on_their_base_cell() {
     let mut cells = vec![cell("a"), cell(" "), cell("שָׁ"), cell("לוֹ"), cell("ם")];
-    bidi_chain().apply_segment(&mut cells, &mut Scratch::default());
+    layout(&mut cells);
     assert_eq!(symbols(&cells), vec!["a", " ", "ם", "לוֹ", "שָׁ"]);
 
     let mut arabic = vec![cell("x"), cell(" "), cell("بِ"), cell("سْ"), cell("م")];
-    bidi_chain().apply_segment(&mut arabic, &mut Scratch::default());
+    layout(&mut arabic);
     assert_eq!(symbols(&arabic), vec!["x", " ", "م", "سْ", "بِ"]);
 }
 
 #[test]
 fn wide_graphemes_keep_head_then_tail() {
     let mut cells = vec![cell("א"), cell("😀"), cell(""), cell("ב")];
-    let map = bidi_chain()
-        .apply_segment(&mut cells, &mut Scratch::default())
-        .expect("reordered");
+    let map = layout(&mut cells).expect("reordered");
     assert_eq!(symbols(&cells), vec!["ב", "😀", "", "א"]);
     assert_eq!(&*map, &[3, 1, 2, 0]);
 
     let mut cjk = vec![cell("中"), cell(""), cell(" "), cell("א"), cell("ב")];
-    bidi_chain().apply_segment(&mut cjk, &mut Scratch::default());
+    layout(&mut cjk);
     assert_eq!(symbols(&cjk), vec!["中", "", " ", "ב", "א"]);
 }
 
@@ -117,13 +114,12 @@ fn box_drawing_frames_split_paragraphs_and_never_move() {
 
 #[test]
 fn rows_without_right_to_left_text_are_untouched() {
-    let chain = bidi_chain();
     let mut scratch = Scratch::default();
     for input in ["abc 123 xyz", "中文 テスト", "┌──┐ │ab│ └──┘", "café ñ"]
     {
         let mut cells = row(input);
-        assert!(!chain.affects(&cells), "{input}");
-        assert!(chain.apply_segment(&mut cells, &mut scratch).is_none());
+        assert!(!affects(&cells), "{input}");
+        assert!(layout_segment(&mut cells, &mut scratch).is_none());
         assert_eq!(text(&cells), input);
     }
     assert_eq!(scratch.text.capacity(), 0);
@@ -132,17 +128,14 @@ fn rows_without_right_to_left_text_are_untouched() {
 
 #[test]
 fn skip_cells_and_kitty_placeholders_block_the_transform() {
-    let chain = bidi_chain();
     let mut skipped = row("אב");
     skipped[1].skip = true;
-    assert!(!chain.affects(&skipped));
+    assert!(!affects(&skipped));
 
     let mut image = row("אב");
     image.push(cell("\u{10EEEE}"));
-    assert!(!chain.affects(&image));
-    assert!(chain
-        .apply_segment(&mut image, &mut Scratch::default())
-        .is_none());
+    assert!(!affects(&image));
+    assert!(layout(&mut image).is_none());
 }
 
 #[test]
@@ -167,7 +160,7 @@ fn styles_move_with_their_glyphs() {
     let mut cells = row("אב");
     cells[0].fg = 1;
     cells[1].fg = 2;
-    bidi_chain().apply_segment(&mut cells, &mut Scratch::default());
+    layout(&mut cells);
     assert_eq!((cells[0].symbol.as_str(), cells[0].fg), ("ב", 2));
     assert_eq!((cells[1].symbol.as_str(), cells[1].fg), ("א", 1));
 }
@@ -175,56 +168,32 @@ fn styles_move_with_their_glyphs() {
 #[test]
 fn leading_orphan_spacer_is_kept() {
     let mut cells = vec![cell(""), cell("א"), cell("ב")];
-    bidi_chain().apply_segment(&mut cells, &mut Scratch::default());
+    layout(&mut cells);
     assert_eq!(symbols(&cells), vec!["", "ב", "א"]);
 }
 
-struct BrokenTransform;
-
-impl PaneRowTransform for BrokenTransform {
-    fn name(&self) -> &'static str {
-        "broken"
-    }
-
-    fn affects(&self, _segment: &[CellData]) -> bool {
-        true
-    }
-
-    fn apply(
-        &self,
-        segment: &mut [CellData],
-        visual_to_logical: &mut Vec<u16>,
-        _scratch: &mut Scratch,
-    ) -> bool {
-        // Splits the wide head from its tail and duplicates column 0.
-        segment.reverse();
-        visual_to_logical.clear();
-        visual_to_logical.extend(std::iter::repeat_n(0, segment.len()));
-        true
-    }
-}
-
-static BROKEN: BrokenTransform = BrokenTransform;
-
 #[test]
-fn invalid_transform_output_restores_the_logical_row() {
-    let chain = PaneDisplayChain(vec![&BROKEN]);
+fn invalid_layout_output_restores_the_logical_row() {
     let logical = vec![cell("a"), cell("中"), cell(""), cell("b")];
     let mut cells = logical.clone();
-    assert!(chain
-        .apply_segment(&mut cells, &mut Scratch::default())
-        .is_none());
+    // Splits the wide head from its tail and duplicates column 0.
+    let broken = |segment: &mut [CellData], map: &mut Vec<u16>, _: &mut Scratch| {
+        segment.reverse();
+        map.extend(std::iter::repeat_n(0, segment.len()));
+        true
+    };
+    assert!(layout_with(&mut cells, &mut Scratch::default(), broken).is_none());
     assert_eq!(cells, logical);
-}
 
-#[test]
-fn chain_names_report_unknown_entries_and_drop_duplicates() {
-    let (chain, unknown) =
-        PaneDisplayChain::from_names(&["bidi".to_owned(), "rainbow".to_owned(), "bidi".to_owned()]);
-    assert_eq!(chain.names(), vec!["bidi"]);
-    assert_eq!(unknown, vec!["rainbow".to_owned()]);
-    assert!(PaneDisplayChain::from_names(&[]).0.is_empty());
-    assert_eq!(builtin_names().collect::<Vec<_>>(), vec!["bidi"]);
+    // A bijection that still splits a wide grapheme is rejected too.
+    let mut cells = logical.clone();
+    let split = |segment: &mut [CellData], map: &mut Vec<u16>, _: &mut Scratch| {
+        segment.reverse();
+        map.extend([3, 2, 1, 0]);
+        true
+    };
+    assert!(layout_with(&mut cells, &mut Scratch::default(), split).is_none());
+    assert_eq!(cells, logical);
 }
 
 #[test]
