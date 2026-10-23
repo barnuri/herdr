@@ -461,7 +461,8 @@ impl ClientShellState {
         if !self.config.pane_display.is_empty() {
             for hit in &self.hits.panes {
                 if super::display::graphics_overlap(
-                    &surface.graphics,
+                    self.graphics.scene(),
+                    false,
                     layout.pane_surface,
                     hit.inner_rect,
                 ) {
@@ -607,7 +608,12 @@ impl ClientShellState {
                 ratatui::widgets::Widget::render(block, geometry.outer, &mut composed);
                 frame.replace_from_ratatui_buffer_preserving_effects(&composed, None);
                 blit_pane_surface(&mut frame, &popup.frame, geometry.inner);
-                if popup.frame.graphics.is_empty() {
+                if !super::display::graphics_overlap(
+                    self.graphics.scene(),
+                    true,
+                    geometry.inner,
+                    geometry.inner,
+                ) {
                     super::display::apply_pane_display(
                         &self.config.pane_display,
                         &mut self.display_scratch,

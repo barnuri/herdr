@@ -448,3 +448,115 @@ fn pane_display_render_scale_profile() {
         }
     }
 }
+
+fn image_at(
+    target: crate::protocol::SurfaceGraphicsTarget,
+) -> crate::protocol::SurfaceGraphicsPlacement {
+    crate::protocol::SurfaceGraphicsPlacement {
+        asset: crate::protocol::SurfaceGraphicsAssetKey {
+            source: crate::protocol::SurfaceGraphicsSource::Terminal {
+                target,
+                image_id: 1,
+            },
+            image_width: 1,
+            image_height: 1,
+            format: crate::protocol::SurfaceGraphicsFormat::Rgba,
+            data_len: 4,
+            data_fingerprint: 1,
+        },
+        logical_placement_id: 1,
+        x: 0,
+        y: 0,
+        cols: 1,
+        rows: 1,
+        source_x: 0,
+        source_y: 0,
+        source_width: 1,
+        source_height: 1,
+        x_offset: 0,
+        y_offset: 0,
+        z: 0,
+        scrollback_offset: 0,
+    }
+}
+
+#[test]
+fn popup_images_skip_the_popup_and_leave_tiled_panes_reordered() {
+    let mut surface = surface_with_popup();
+    surface.frame = FrameData::from_ratatui_buffer_with_hyperlinks(
+        &Buffer::with_lines(["שלום ab", "PANE"]),
+        None,
+        &[],
+    );
+    surface.popup.as_mut().unwrap().frame = FrameData::from_ratatui_buffer_with_hyperlinks(
+        &Buffer::with_lines(["שלום      ", "", ""]),
+        None,
+        &[],
+    );
+    surface
+        .graphics
+        .placements
+        .push(image_at(crate::protocol::SurfaceGraphicsTarget::Popup {
+            terminal_id: "terminal-popup".into(),
+        }));
+    let mut state = shell(&bidi_config(), surface);
+    let frame = state.compose(COLS, ROWS).unwrap().frame;
+    let popup = state.hits.popup.clone().expect("popup hit");
+    assert!(pane_row(&frame, popup.inner_rect, 0).starts_with("שלום"));
+    assert!(state.popup_display_maps.is_empty());
+    assert!(!state.display_maps.is_empty());
+}
+
+#[test]
+fn pane_images_skip_only_their_pane() {
+    let mut surface = text_surface("שלום ab", "PANE", 8);
+    surface
+        .graphics
+        .placements
+        .push(image_at(crate::protocol::SurfaceGraphicsTarget::Pane {
+            pane_id: "pane_1".into(),
+        }));
+    let mut state = shell(&bidi_config(), surface);
+    let frame = state.compose(COLS, ROWS).unwrap().frame;
+    assert_eq!(
+        pane_row(&frame, state.hits.panes[0].inner_rect, 0),
+        "שלום ab "
+    );
+    assert!(state.display_maps.is_empty());
+}
+
+#[test]
+fn patches_check_only_the_patched_pane_segment() {
+    // Hebrew sits in the right pane only, so an ASCII span in the left pane
+    // keeps the fast path, and a span in the right pane recomposes.
+    let mut surface = surface();
+    surface.frame = FrameData::from_ratatui_buffer_with_hyperlinks(
+        &Buffer::with_lines(["ab אב", "PA NE"]),
+        None,
+        &[],
+    );
+    surface.panes[0].rect.width = 2;
+    surface.panes[0].inner_rect.width = 2;
+    let mut right = surface.panes[0].clone();
+    right.pane_id = "pane_2".into();
+    right.rect.x = 3;
+    right.inner_rect.x = 3;
+    surface.panes.push(right);
+    let panes = surface.panes.clone();
+    let mut state = shell(&bidi_config(), surface.clone());
+
+    let mut left_patch = patch(cells("x"), 0, 0);
+    left_patch.panes = panes.clone();
+    assert!(matches!(
+        state.apply_pane_surface_patch(left_patch),
+        ClientPaneSurfacePatchOutcome::Applied(Some(_))
+    ));
+
+    let mut state = shell(&bidi_config(), surface);
+    let mut right_patch = patch(cells("x"), 3, 0);
+    right_patch.panes = panes;
+    assert!(matches!(
+        state.apply_pane_surface_patch(right_patch),
+        ClientPaneSurfacePatchOutcome::Applied(None)
+    ));
+}

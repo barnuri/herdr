@@ -51,22 +51,57 @@ pub(super) fn apply_pane_display(
     }
 }
 
-/// Whether any surface graphics placement overlaps `inner`, given the pane
-/// surface's origin on screen. Image cells are never reordered.
+/// Whether any graphics placement of the pane surface (`popup == false`) or of
+/// the popup (`popup == true`) overlaps `inner`. `origin` is the screen origin
+/// those placements are relative to. Image cells are never reordered.
 pub(super) fn graphics_overlap(
     graphics: &crate::protocol::SurfaceGraphicsScene,
-    surface_origin: Rect,
+    popup: bool,
+    origin: Rect,
     inner: Rect,
 ) -> bool {
-    graphics.placements.iter().any(|placement| {
-        let x = u32::from(surface_origin.x) + u32::from(placement.x);
-        let y = u32::from(surface_origin.y) + u32::from(placement.y);
-        let right = x.saturating_add(placement.cols);
-        let bottom = y.saturating_add(placement.rows);
-        x < u32::from(inner.x) + u32::from(inner.width)
-            && right > u32::from(inner.x)
-            && y < u32::from(inner.y) + u32::from(inner.height)
-            && bottom > u32::from(inner.y)
+    graphics
+        .placements
+        .iter()
+        .filter(|placement| is_popup_placement(placement) == popup)
+        .any(|placement| {
+            let x = u32::from(origin.x) + u32::from(placement.x);
+            let y = u32::from(origin.y) + u32::from(placement.y);
+            let right = x.saturating_add(placement.cols);
+            let bottom = y.saturating_add(placement.rows);
+            x < u32::from(inner.x) + u32::from(inner.width)
+                && right > u32::from(inner.x)
+                && y < u32::from(inner.y) + u32::from(inner.height)
+                && bottom > u32::from(inner.y)
+        })
+}
+
+fn is_popup_placement(placement: &crate::protocol::SurfaceGraphicsPlacement) -> bool {
+    matches!(
+        placement.asset.source,
+        crate::protocol::SurfaceGraphicsSource::Terminal {
+            target: crate::protocol::SurfaceGraphicsTarget::Popup { .. },
+            ..
+        }
+    )
+}
+
+/// Column ranges `[start, end)` of each pane inner rect on surface row `y`
+/// that intersect `[x, x + len)`. Compose transforms each pane segment on its
+/// own, so patch checks must look at the same segments.
+fn pane_segments(
+    panes: &[crate::protocol::PaneSurfacePane],
+    y: u16,
+    x: u16,
+    len: usize,
+) -> impl Iterator<Item = (usize, usize)> + '_ {
+    let span_end = usize::from(x).saturating_add(len);
+    panes.iter().filter_map(move |pane| {
+        let inner = pane.inner_rect;
+        let inside_row = y >= inner.y && y < inner.y.saturating_add(inner.height);
+        let start = usize::from(inner.x);
+        let end = start + usize::from(inner.width);
+        (inside_row && start < span_end && end > usize::from(x)).then_some((start, end))
     })
 }
 
@@ -119,18 +154,37 @@ impl ClientShellState {
             return true;
         };
         let frame = &surface.frame;
-        let surface_row = |y: u16| {
-            let width = usize::from(frame.width);
-            let start = usize::from(y) * width;
-            frame.cells.get(start..start + width).unwrap_or(&[])
+        let panes = if patch.panes.is_empty() {
+            &surface.panes
+        } else {
+            &patch.panes
+        };
+        let width = usize::from(frame.width);
+        let old_affects = |y: u16, x: u16, len: usize| {
+            let row = usize::from(y) * width;
+            pane_segments(&surface.panes, y, x, len).any(|(start, end)| {
+                frame
+                    .cells
+                    .get(row + start..row + end.min(width))
+                    .is_some_and(|segment| chain.affects(segment))
+            })
+        };
+        let new_affects = |row: &crate::protocol::PaneSurfacePatchRow| {
+            pane_segments(panes, row.y, row.x, row.cells.len()).any(|(start, end)| {
+                let from = start.saturating_sub(usize::from(row.x));
+                let to = (end - usize::from(row.x).min(end)).min(row.cells.len());
+                row.cells
+                    .get(from..to)
+                    .is_some_and(|segment| chain.affects(segment))
+            })
         };
         patch
             .rows
             .iter()
-            .any(|row| chain.affects(surface_row(row.y)) || chain.affects(&row.cells))
+            .any(|row| old_affects(row.y, row.x, row.cells.len()) || new_affects(row))
             || [frame.cursor.as_ref(), patch.cursor.as_ref()]
                 .into_iter()
                 .flatten()
-                .any(|cursor| chain.affects(surface_row(cursor.y)))
+                .any(|cursor| old_affects(cursor.y, cursor.x, 1))
     }
 }
