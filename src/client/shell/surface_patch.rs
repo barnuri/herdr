@@ -108,6 +108,19 @@ fn pane_geometry_matches(
 }
 
 impl ClientShellState {
+    /// Applies `patch` for profiles outside the client module. Returns
+    /// whether it needs a full composition, or `None` when it was rejected.
+    #[cfg(test)]
+    pub(crate) fn apply_pane_surface_patch_needs_compose(
+        &mut self,
+        patch: crate::protocol::PaneSurfacePatch,
+    ) -> Option<bool> {
+        match self.apply_pane_surface_patch(patch) {
+            ClientPaneSurfacePatchOutcome::Applied(composed) => Some(composed.is_none()),
+            ClientPaneSurfacePatchOutcome::Rejected => None,
+        }
+    }
+
     pub(crate) fn apply_pane_surface_patch(
         &mut self,
         patch: crate::protocol::PaneSurfacePatch,
