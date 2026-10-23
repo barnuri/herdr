@@ -1002,8 +1002,8 @@
         {
           "key": "ui.pane_transforms",
           "type": "array",
-          "default": "[]",
-          "description": "Built-in display transforms applied, in order, to each pane row before it is drawn. \"bidi\" shows right-to-left text such as Hebrew and Arabic in reading order, using the Unicode Bidirectional Algorithm with a left-to-right base direction inside each pane. Copied text, selection text, and pane reads keep logical order; the cursor, mouse, and selection highlight follow the drawn glyphs. Leave it empty when the outer terminal or the application already reorders text. Unknown names are reported and ignored. Changes apply on config reload."
+          "default": "[\"bidi\"]",
+          "description": "Built-in display transforms applied, in order, to each pane row before it is drawn. \"bidi\" shows right-to-left text such as Hebrew and Arabic in reading order, using the Unicode Bidirectional Algorithm with a left-to-right base direction inside each pane. Copied text, selection text, and pane reads keep logical order; the cursor, mouse, and selection highlight follow the drawn glyphs. When the outer terminal reports that it reorders text itself (ECMA-48 BiDi mode), Herdr switches it to explicit mode while running and back on exit. Set it to [] to draw logical order, for example when the application already reorders text. Unknown names are reported and ignored. Changes apply on config reload."
         },
         {
           "key": "ui.hide_tab_bar_when_single_tab",

@@ -9,6 +9,12 @@ fn bidi_config() -> Config {
     config
 }
 
+fn logical_config() -> Config {
+    let mut config = Config::default();
+    config.ui.pane_transforms = Vec::new();
+    config
+}
+
 /// One pane whose two rows hold `top` and `bottom`, each `width` cells wide.
 fn text_surface(top: &str, bottom: &str, width: u16) -> PaneSurfaceFrame {
     let pad = |line: &str| {
@@ -58,7 +64,7 @@ fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
 
 #[test]
 fn bidi_reorders_pane_rows_and_leaves_everything_else_identical() {
-    let off = shell(&Config::default(), text_surface("שלום ab", "PANE", 8))
+    let off = shell(&logical_config(), text_surface("שלום ab", "PANE", 8))
         .compose(COLS, ROWS)
         .unwrap()
         .frame;
@@ -81,11 +87,17 @@ fn bidi_reorders_pane_rows_and_leaves_everything_else_identical() {
 }
 
 #[test]
-fn default_config_keeps_logical_order() {
+fn default_config_reorders_and_empty_transforms_keep_logical_order() {
     let mut state = shell(&Config::default(), text_surface("שלום", "PANE", 4));
+    let frame = state.compose(COLS, ROWS).unwrap().frame;
+    assert_eq!(pane_row(&frame, state.hits.panes[0].inner_rect, 0), "םולש");
+    assert!(state.pane_display_enabled());
+
+    let mut state = shell(&logical_config(), text_surface("שלום", "PANE", 4));
     let frame = state.compose(COLS, ROWS).unwrap().frame;
     assert_eq!(pane_row(&frame, state.hits.panes[0].inner_rect, 0), "שלום");
     assert!(state.display_maps.is_empty());
+    assert!(!state.pane_display_enabled());
 }
 
 #[test]
@@ -295,7 +307,7 @@ fn patches_on_right_to_left_rows_recompose() {
     ));
 
     // Without transforms the same patch keeps the fast path.
-    let mut state = shell(&Config::default(), text_surface("א x", "PANE", 4));
+    let mut state = shell(&logical_config(), text_surface("א x", "PANE", 4));
     assert!(matches!(
         state.apply_pane_surface_patch(patch(cells("1"), 2, 0)),
         ClientPaneSurfacePatchOutcome::Applied(Some(_))
@@ -321,7 +333,7 @@ fn popup_rows_reorder_inside_the_popup_only() {
 
 #[test]
 fn live_reload_toggles_transforms_and_reports_unknown_names() {
-    let mut state = shell(&Config::default(), text_surface("שלום", "PANE", 4));
+    let mut state = shell(&logical_config(), text_surface("שלום", "PANE", 4));
     let mut config = bidi_config();
     config.ui.pane_transforms.push("rainbow".into());
     let diagnostics = state.config.apply_live_config(&config, &[], &[]);
@@ -331,7 +343,7 @@ fn live_reload_toggles_transforms_and_reports_unknown_names() {
     let frame = state.compose(COLS, ROWS).unwrap().frame;
     assert_eq!(pane_row(&frame, state.hits.panes[0].inner_rect, 0), "םולש");
 
-    state.config.apply_live_config(&Config::default(), &[], &[]);
+    state.config.apply_live_config(&logical_config(), &[], &[]);
     let frame = state.compose(COLS, ROWS).unwrap().frame;
     assert_eq!(pane_row(&frame, state.hits.panes[0].inner_rect, 0), "שלום");
 }
@@ -405,7 +417,7 @@ fn pane_display_render_scale_profile() {
                 let config = if transforms {
                     bidi_config()
                 } else {
-                    Config::default()
+                    logical_config()
                 };
                 let mut next = surface();
                 next.frame = FrameData::from_ratatui_buffer(

@@ -983,7 +983,7 @@ pub struct UiConfig {
     /// Built-in display transforms applied, in order, to each pane row before
     /// it is drawn. "bidi" lays out right-to-left text with the Unicode
     /// Bidirectional Algorithm and a left-to-right base direction. Copied text
-    /// keeps logical order. Empty by default.
+    /// keeps logical order. Default: ["bidi"]; set [] to draw logical order.
     pub pane_transforms: Vec<String>,
     /// Hide the tab row when the workspace has one tab. Default: false.
     pub hide_tab_bar_when_single_tab: bool,
@@ -1225,7 +1225,7 @@ impl Default for UiConfig {
             show_agent_labels_on_pane_borders: false,
             hide_tab_bar_when_single_tab: false,
             tab_bar_position: TabBarPositionConfig::Top,
-            pane_transforms: Vec::new(),
+            pane_transforms: vec!["bidi".to_owned()],
             tab_bar_right: Vec::new(),
             tab_bar_right_separator: " ".into(),
             window_title: super::window_title::default_window_title(),
@@ -2047,10 +2047,19 @@ pane_history = true
     }
 
     #[test]
-    fn pane_transforms_are_opt_in_and_report_unknown_names() {
+    fn pane_transforms_default_to_bidi_and_report_unknown_names() {
         let default = Config::default();
-        assert!(default.ui.pane_transforms.is_empty());
+        assert_eq!(default.ui.pane_transforms, vec!["bidi"]);
         assert!(default.collect_diagnostics().is_empty());
+
+        let disabled: Config = toml::from_str(
+            r#"
+[ui]
+pane_transforms = []
+"#,
+        )
+        .unwrap();
+        assert!(disabled.ui.pane_transforms.is_empty());
 
         let config: Config = toml::from_str(
             r#"

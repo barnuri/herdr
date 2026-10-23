@@ -68,6 +68,10 @@ impl ClientShellState {
         }
     }
 
+    pub(crate) fn pane_display_enabled(&self) -> bool {
+        self.config.pane_display_enabled()
+    }
+
     pub(crate) fn reload_client_config(&mut self) {
         match crate::config::load_live_config() {
             Ok(loaded) => {
@@ -180,6 +184,11 @@ impl ClientShellConfig {
         self.keybinding_source = source;
         self.keybinds.keybinds.custom_commands.clear();
         self
+    }
+
+    /// Whether this client reorders pane rows before drawing them.
+    pub(crate) fn pane_display_enabled(&self) -> bool {
+        !self.pane_display.is_empty()
     }
 
     pub(crate) fn uses_endpoint_keybindings(&self) -> bool {
