@@ -154,8 +154,8 @@ pub(super) struct TerminalGuard {
     /// The modifyOtherKeys sequence written at setup, re-sent on refresh.
     modify_other_keys_sequence: Option<&'static [u8]>,
     reset_host_color_scheme_reports: bool,
-    /// Whether the host reorders text itself (BDSM implicit) at startup.
-    host_bidi: Option<bool>,
+    /// The host's ECMA-48 BiDi mode (BDSM) reported at startup.
+    host_bidi: Option<HostBidiMode>,
     /// Set while Herdr holds the host in explicit BiDi mode and owes `CSI 8 h`.
     host_bidi_explicit: Arc<AtomicBool>,
     restore_claimed: Arc<AtomicBool>,
@@ -184,9 +184,24 @@ pub(super) struct HostTerminalProbe {
     pub(super) escape_disambiguation: bool,
     /// None when the host did not answer; exact pixel input stays disabled.
     pub(super) sgr_pixel_mouse: Option<bool>,
-    /// Some(true) when the host reorders text itself (ECMA-48 BDSM implicit).
-    /// None when the host does not recognize the mode or did not answer.
-    pub(super) host_bidi: Option<bool>,
+    /// The host's ECMA-48 BiDi mode (BDSM). None when the host does not
+    /// recognize the mode or did not answer.
+    pub(super) host_bidi: Option<HostBidiMode>,
+}
+
+/// The outer terminal's ECMA-48 BiDi mode (BDSM, ANSI mode 8) from DECRPM.
+// Windows clients do not probe the host, so they never construct a mode.
+#[cfg_attr(windows, allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum HostBidiMode {
+    /// Status 1: the host reorders text itself and can be switched to
+    /// explicit mode.
+    Implicit,
+    /// Status 3: the host always reorders text itself; `CSI 8 l` cannot stop
+    /// it.
+    PermanentlyImplicit,
+    /// Status 2 or 4: the host draws text in the order it receives it.
+    Explicit,
 }
 
 #[cfg(not(windows))]
@@ -263,8 +278,9 @@ fn host_terminal_probe(responses: &HostKeyboardProbeResponses) -> HostTerminalPr
         _ => None,
     };
     let host_bidi = match responses.bidi_status {
-        Some(1 | 3) => Some(true),
-        Some(2 | 4) => Some(false),
+        Some(1) => Some(HostBidiMode::Implicit),
+        Some(3) => Some(HostBidiMode::PermanentlyImplicit),
+        Some(2 | 4) => Some(HostBidiMode::Explicit),
         _ => None,
     };
     HostTerminalProbe {
@@ -891,16 +907,26 @@ impl TerminalGuard {
         std::mem::take(&mut self.buffered_host_input)
     }
 
+    /// Whether the host reorders text itself and cannot be switched to
+    /// explicit mode. The client then leaves pane rows in logical order,
+    /// because laying them out too would reorder text twice.
+    pub(super) fn host_reorders_text_permanently(&self) -> bool {
+        self.host_bidi == Some(HostBidiMode::PermanentlyImplicit)
+    }
+
     /// Holds a host that reorders text itself in explicit BiDi mode while this
     /// client reorders pane rows, so text is not reordered twice. Herdr only
-    /// ever returns the host to implicit mode after switching it away.
+    /// ever returns the host to implicit mode after switching it away, and
+    /// never writes to a host whose mode is permanent.
     /// Returns whether the host mode changed.
     pub(super) fn set_host_bidi_explicit(
         &self,
         writer: &mut impl io::Write,
         explicit: bool,
     ) -> io::Result<bool> {
-        if self.host_bidi != Some(true) || self.restore_claimed.load(Ordering::Acquire) {
+        if self.host_bidi != Some(HostBidiMode::Implicit)
+            || self.restore_claimed.load(Ordering::Acquire)
+        {
             return Ok(false);
         }
         if self.host_bidi_explicit.load(Ordering::Acquire) == explicit {
@@ -1365,10 +1391,10 @@ mod tests {
     fn host_capability_probe_maps_bidi_mode_states() {
         for (status, expected) in [
             (0, None),
-            (1, Some(true)),
-            (2, Some(false)),
-            (3, Some(true)),
-            (4, Some(false)),
+            (1, Some(HostBidiMode::Implicit)),
+            (2, Some(HostBidiMode::Explicit)),
+            (3, Some(HostBidiMode::PermanentlyImplicit)),
+            (4, Some(HostBidiMode::Explicit)),
         ] {
             let mut buffered = format!("a\x1b[?1016;2$y\x1b[8;{status}$yb\x1b[?1;2c").into_bytes();
             let mut responses = HostKeyboardProbeResponses::default();
@@ -1397,7 +1423,10 @@ mod tests {
 
         consume_host_keyboard_probe_responses(&mut buffered, &mut responses);
 
-        assert_eq!(host_terminal_probe(&responses).host_bidi, Some(false));
+        assert_eq!(
+            host_terminal_probe(&responses).host_bidi,
+            Some(HostBidiMode::Explicit)
+        );
         assert_eq!(buffered, kept);
     }
 
@@ -1405,7 +1434,7 @@ mod tests {
     #[test]
     fn host_bidi_explicit_mode_follows_the_bidi_setting_and_survives_refresh() {
         let mut guard = refresh_test_guard(true, true, None);
-        guard.host_bidi = Some(true);
+        guard.host_bidi = Some(HostBidiMode::Implicit);
         let mut output = Vec::new();
         // The result says whether the host mode changed, so a live reload
         // knows to repaint rows drawn under the previous mode.
@@ -1426,8 +1455,13 @@ mod tests {
         assert_eq!(output, b"\x1b[8l");
         assert!(guard.host_bidi_explicit.load(Ordering::Acquire));
 
-        // Hosts that do not reorder text, or did not answer, are never switched.
-        for host_bidi in [None, Some(false)] {
+        // Hosts that do not reorder text, did not answer, or reorder text
+        // permanently are never switched.
+        for host_bidi in [
+            None,
+            Some(HostBidiMode::Explicit),
+            Some(HostBidiMode::PermanentlyImplicit),
+        ] {
             let mut guard = refresh_test_guard(true, true, None);
             guard.host_bidi = host_bidi;
             let mut output = Vec::new();
@@ -1435,7 +1469,33 @@ mod tests {
             assert!(!guard.set_host_bidi_explicit(&mut output, false).unwrap());
             assert!(output.is_empty(), "host_bidi {host_bidi:?}");
             assert!(!guard.host_bidi_explicit.load(Ordering::Acquire));
+            assert_eq!(
+                refresh_bytes(&guard, false, false),
+                b"\x1b[<1u\x1b[>7u\x1b[?2004h",
+                "host_bidi {host_bidi:?}"
+            );
+            assert_eq!(
+                guard.host_reorders_text_permanently(),
+                host_bidi == Some(HostBidiMode::PermanentlyImplicit)
+            );
         }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn permanently_implicit_host_bidi_is_left_alone_and_restore_writes_nothing() {
+        let mut buffered = b"\x1b[8;3$y\x1b[?1;2c".to_vec();
+        let mut responses = HostKeyboardProbeResponses::default();
+        consume_host_keyboard_probe_responses(&mut buffered, &mut responses);
+        let mut guard = refresh_test_guard(true, true, None);
+        guard.host_bidi = host_terminal_probe(&responses).host_bidi;
+        assert!(guard.host_reorders_text_permanently());
+
+        let mut output = Vec::new();
+        assert!(!guard.set_host_bidi_explicit(&mut output, true).unwrap());
+        assert!(output.is_empty(), "CSI 8 l cannot switch a permanent mode");
+        // Nothing was switched, so restore owes the host no CSI 8 h.
+        assert!(!guard.host_bidi_explicit.load(Ordering::Acquire));
     }
 
     #[cfg(not(windows))]
@@ -1458,7 +1518,7 @@ mod tests {
         }
 
         let mut guard = refresh_test_guard(true, true, None);
-        guard.host_bidi = Some(true);
+        guard.host_bidi = Some(HostBidiMode::Implicit);
         for fail_flush in [false, true] {
             assert!(guard
                 .set_host_bidi_explicit(&mut FailingWriter { fail_flush }, true)

@@ -47,6 +47,9 @@ pub(crate) struct ClientShellConfig {
     pub(super) redraw_on_focus_gained: bool,
     /// Lay out pane rows in BiDi visual order while composing frames.
     pub(super) bidi: bool,
+    /// The outer terminal reorders text itself and cannot be switched off,
+    /// so pane rows stay in logical order whatever `bidi` says.
+    pub(super) host_reorders_text: bool,
     pub(super) switch_ascii_input_source_in_prefix: bool,
     pub(super) local_config_path: std::path::PathBuf,
     pub(super) preferences_path: Option<std::path::PathBuf>,

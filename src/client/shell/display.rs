@@ -150,7 +150,7 @@ impl ClientShellState {
         &self,
         patch: &crate::protocol::PaneSurfacePatch,
     ) -> bool {
-        if !self.config.bidi {
+        if !self.config.lays_out_bidi() {
             return false;
         }
         let Some(surface) = self.pane_surface.as_ref() else {

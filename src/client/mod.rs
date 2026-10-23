@@ -275,6 +275,9 @@ fn run_client_with_mode(
     loop_config.host_escape_disambiguation_active =
         terminal_guard.host_escape_disambiguation_active();
     loop_config.host_sgr_pixel_mouse = terminal_guard.host_sgr_pixel_mouse();
+    if let Some(shell) = loop_config.shell_config.as_mut() {
+        shell.set_host_reorders_text(terminal_guard.host_reorders_text_permanently());
+    }
     loop_config.initial_host_input = terminal_guard.take_buffered_host_input();
 
     let shell_surface_size = loop_config

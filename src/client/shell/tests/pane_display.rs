@@ -101,6 +101,27 @@ fn default_config_reorders_and_disabled_bidi_keeps_logical_order() {
 }
 
 #[test]
+fn a_host_that_always_reorders_text_keeps_pane_rows_logical() {
+    let mut config = ClientShellConfig::from_config(&bidi_config());
+    config.set_host_reorders_text(true);
+    let mut state = ClientShellState::new(config);
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(text_surface("א x", "PANE", 4));
+    let frame = state.compose(COLS, ROWS).unwrap().frame;
+    assert_eq!(pane_row(&frame, state.hits.panes[0].inner_rect, 0), "א x ");
+    assert!(state.display_maps.is_empty());
+    // The host lays the row out, so patches keep the fast path.
+    assert!(matches!(
+        state.apply_pane_surface_patch(patch(cells("1"), 2, 0)),
+        ClientPaneSurfacePatchOutcome::Applied(Some(_))
+    ));
+    // A live reload keeps the host's permanent mode.
+    state.config.apply_live_config(&bidi_config(), &[], &[]);
+    let frame = state.compose(COLS, ROWS).unwrap().frame;
+    assert!(pane_row(&frame, state.hits.panes[0].inner_rect, 0).starts_with('א'));
+}
+
+#[test]
 fn side_by_side_panes_reorder_independently() {
     // The panes are separated by a plain space, which would not split a
     // paragraph: reordering the whole row would draw "דג בא".

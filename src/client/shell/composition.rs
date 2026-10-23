@@ -458,7 +458,7 @@ impl ClientShellState {
         }
         // BiDi layout runs after every logical highlight is stamped, so
         // highlights move with their glyphs.
-        if self.config.bidi {
+        if self.config.lays_out_bidi() {
             for hit in &self.hits.panes {
                 if super::display::graphics_overlap(
                     self.graphics.scene(),
@@ -607,7 +607,7 @@ impl ClientShellState {
                 ratatui::widgets::Widget::render(block, geometry.outer, &mut composed);
                 frame.replace_from_ratatui_buffer_preserving_effects(&composed, None);
                 blit_pane_surface(&mut frame, &popup.frame, geometry.inner);
-                if self.config.bidi
+                if self.config.lays_out_bidi()
                     && !super::display::graphics_overlap(
                         self.graphics.scene(),
                         true,
