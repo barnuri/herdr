@@ -141,6 +141,7 @@ impl ClientShellState {
     pub(super) fn stop_selection_autoscroll(&mut self) {
         self.selection_autoscroll = None;
         self.selection_autoscroll_deadline = None;
+        self.selection_wheel_pointer = None;
     }
 
     fn selection_edge_scroll_lines(distance: u16) -> usize {
@@ -350,41 +351,62 @@ impl ClientShellState {
                 Some(projected),
                 outcome,
             );
+            self.selection_wheel_pointer = Some(ClientSelectionScrollPointer {
+                pane_id: hit.pane_id.clone(),
+                column: mouse.column,
+                row: mouse.row,
+                inner_rect: hit.inner_rect,
+                offset_from_bottom,
+            });
             self.push_pane_scroll_offset(hit.pane_id, offset_from_bottom, outcome);
             outcome.repaint = true;
         }
         true
     }
 
-    /// Re-resolves the autoscrolling selection endpoint under the stationary
-    /// pointer once the displayed frame shows the autoscroll offset. Until
-    /// then the endpoint column was mapped through the row drawn there before
-    /// the scroll, and rows with different BiDi layouts map columns
-    /// differently.
+    /// Re-resolves the selection endpoint under the stationary pointer once the
+    /// displayed frame shows the offset an autoscroll or wheel scroll asked
+    /// for. Until then the endpoint column was mapped through the row drawn
+    /// there before the scroll, and rows with different BiDi layouts map
+    /// columns differently.
     fn remap_selection_autoscroll_endpoint(&mut self, outcome: &mut ClientShellInput) {
-        let Some(autoscroll) = self.selection_autoscroll.as_ref() else {
+        let pointer = self
+            .selection_autoscroll
+            .as_ref()
+            .map(|autoscroll| ClientSelectionScrollPointer {
+                pane_id: autoscroll.pane_id.clone(),
+                column: autoscroll.last_mouse_column,
+                row: autoscroll.last_mouse_row,
+                inner_rect: autoscroll.inner_rect,
+                offset_from_bottom: autoscroll.offset_from_bottom,
+            })
+            .or_else(|| self.selection_wheel_pointer.clone());
+        let Some(pointer) = pointer else {
             return;
         };
         let Some(hit) = self
             .hits
             .panes
             .iter()
-            .find(|hit| {
-                hit.pane_id == autoscroll.pane_id && hit.inner_rect == autoscroll.inner_rect
-            })
+            .find(|hit| hit.pane_id == pointer.pane_id && hit.inner_rect == pointer.inner_rect)
             .cloned()
         else {
             return;
         };
         let Some(displayed) = hit
             .scroll
-            .filter(|metrics| metrics.offset_from_bottom == autoscroll.offset_from_bottom)
+            .filter(|metrics| metrics.offset_from_bottom == pointer.offset_from_bottom)
         else {
             return;
         };
-        let (column, row) = (autoscroll.last_mouse_column, autoscroll.last_mouse_row);
-        let endpoint = self.selection_endpoint_column(&hit, column, row);
-        self.update_selection_cursor_with_metrics(&hit, endpoint, row, Some(displayed), outcome);
+        let endpoint = self.selection_endpoint_column(&hit, pointer.column, pointer.row);
+        self.update_selection_cursor_with_metrics(
+            &hit,
+            endpoint,
+            pointer.row,
+            Some(displayed),
+            outcome,
+        );
     }
 
     pub(super) fn request_selection_drag_repaint(&mut self, now: std::time::Instant) -> bool {

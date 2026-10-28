@@ -279,7 +279,7 @@ status: active
 
 patch: `vendor/patches/libghostty-vt/0009-ansi-bidi-mode.patch`
 
-herdr issue: none; review of https://github.com/herdrdev/herdr/pull/5500
+herdr issue: https://github.com/herdrdev/herdr/issues/5118
 
 upstream discussion: not opened
 

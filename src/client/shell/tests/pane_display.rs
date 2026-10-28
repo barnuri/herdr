@@ -398,6 +398,67 @@ fn selection_autoscroll_remaps_the_pointer_against_the_row_shown_after_scrolling
     }
 }
 
+fn three_row_surface(rows: [&str; 3], offset: u64, max: u64) -> PaneSurfaceFrame {
+    let mut surface = scrolled_text_surface(rows[0], rows[1], offset, max);
+    surface.frame =
+        FrameData::from_ratatui_buffer_with_hyperlinks(&Buffer::with_lines(rows), None, &[]);
+    let pane = &mut surface.panes[0];
+    pane.rect.height = 3;
+    pane.inner_rect.height = 3;
+    if let Some(scroll) = pane.scroll.as_mut() {
+        scroll.viewport_rows = 3;
+    }
+    surface
+}
+
+#[test]
+fn wheel_scroll_during_a_drag_remaps_the_pointer_against_the_row_shown_after_scrolling() {
+    // The pointer rests on the interior row, visual column 0, so no
+    // autoscroll runs. Before the wheel scroll that row is Hebrew, drawn
+    // "דגבא", so the column maps to logical 3. The ASCII row that scrolls
+    // under the pointer maps it to logical 0.
+    let mut config = bidi_config();
+    config.ui.copy_on_select = false;
+    let mut state = shell(&config, three_row_surface(["wxyz", "אבגד", "stuv"], 0, 50));
+    let inner = state.hits.panes[0].inner_rect;
+    let offset = state.config.mouse_scroll_lines.min(50);
+    state.handle_raw_events(vec![RawInputEvent::Mouse(mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        inner.x + 1,
+        inner.y + 2,
+    ))]);
+    for kind in [
+        MouseEventKind::Drag(MouseButton::Left),
+        MouseEventKind::ScrollUp,
+    ] {
+        state.handle_raw_events(vec![RawInputEvent::Mouse(mouse(
+            kind,
+            inner.x,
+            inner.y + 1,
+        ))]);
+    }
+    assert!(state.selection_autoscroll.is_none());
+    let selection = state.selection.as_ref().expect("selection");
+    assert_eq!(selection.ordered_cells().0 .1, 3);
+
+    state.set_pane_surface(three_row_surface(
+        ["lmno", "abcd", "efgh"],
+        offset as u64,
+        50,
+    ));
+    state.compose(COLS, ROWS).expect("scrolled frame");
+    state.handle_raw_events(vec![RawInputEvent::Mouse(mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        inner.x,
+        inner.y + 1,
+    ))]);
+    let selection = state
+        .selection
+        .as_ref()
+        .expect("selection survives release");
+    assert_eq!(selection.ordered_cells().0 .1, 0);
+}
+
 #[test]
 fn forwarded_mouse_reports_and_link_clicks_use_logical_columns() {
     let mut surface = text_surface("אבגד", "PANE", 4);
@@ -439,30 +500,34 @@ fn forwarded_mouse_reports_and_link_clicks_use_logical_columns() {
 
 #[test]
 fn sgr_pixel_reports_shift_with_the_column_remap() {
-    let mut surface = text_surface("אבגד", "PANE", 4);
-    surface.panes[0].mouse_reporting = true;
-    surface.panes[0].sgr_pixel_mouse = true;
-    surface.panes[0].pixel_width = 40;
-    surface.panes[0].pixel_height = 40;
-    let mut state = shell(&bidi_config(), surface);
-    let inner = state.hits.panes[0].inner_rect;
-    let geometry = crate::input::mouse::HostGeometry::new(COLS, ROWS, u32::from(COLS) * 10, 400)
-        .expect("host geometry");
-    // Pointer 3 px into visual column 3 (glyph א, logical column 0).
-    let x = (u32::from(inner.x) + 3) * 10 + 3;
-    let y = u32::from(inner.y) * 20 + 1;
-    let down = state.handle_pixel_mouse(format!("\x1b[<0;{x};{y}M").as_bytes(), geometry);
-    let [ClientMessage::ClientShellPaneInput { events, .. }] = &down.requests[..] else {
-        panic!("expected one pane input request");
-    };
-    let [ClientPaneInputEvent::Mouse { position, .. }] = &events[..] else {
-        panic!("expected one mouse event");
-    };
-    let ClientMousePosition::Pixels { x, column, .. } = position else {
-        panic!("expected a pixel report, got {position:?}");
-    };
-    assert_eq!(*column, 0);
-    assert_eq!(*x, 3);
+    // Host pixels are one-based. 3 px into visual column 3 (glyph א,
+    // logical column 0) stays 3 px into its cell. The last pixel of visual
+    // column 0 (glyph ד, logical column 3) becomes the pane's last pixel.
+    for (host_x, column, pane_x) in [(33, 0, 3), (10, 3, 40)] {
+        let mut surface = text_surface("אבגד", "PANE", 4);
+        surface.panes[0].mouse_reporting = true;
+        surface.panes[0].sgr_pixel_mouse = true;
+        surface.panes[0].pixel_width = 40;
+        surface.panes[0].pixel_height = 40;
+        let mut state = shell(&bidi_config(), surface);
+        let inner = state.hits.panes[0].inner_rect;
+        let geometry =
+            crate::input::mouse::HostGeometry::new(COLS, ROWS, u32::from(COLS) * 10, 400)
+                .expect("host geometry");
+        let x = u32::from(inner.x) * 10 + host_x;
+        let y = u32::from(inner.y) * 20 + 1;
+        let down = state.handle_pixel_mouse(format!("\x1b[<0;{x};{y}M").as_bytes(), geometry);
+        let [ClientMessage::ClientShellPaneInput { events, .. }] = &down.requests[..] else {
+            panic!("expected one pane input request");
+        };
+        let [ClientPaneInputEvent::Mouse { position, .. }] = &events[..] else {
+            panic!("expected one mouse event");
+        };
+        let ClientMousePosition::Pixels { x, column: got, .. } = position else {
+            panic!("expected a pixel report, got {position:?}");
+        };
+        assert_eq!((*got, *x), (column, pane_x), "host x {host_x}");
+    }
 }
 
 fn patch(

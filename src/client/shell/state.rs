@@ -805,6 +805,17 @@ pub(super) struct ClientSelectionAutoscroll {
     pub(super) max_offset_from_bottom: usize,
 }
 
+/// A selection endpoint that must be re-resolved under the stationary pointer
+/// once the displayed frame shows `offset_from_bottom`.
+#[derive(Clone, Debug)]
+pub(super) struct ClientSelectionScrollPointer {
+    pub(super) pane_id: String,
+    pub(super) column: u16,
+    pub(super) row: u16,
+    pub(super) inner_rect: Rect,
+    pub(super) offset_from_bottom: usize,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ClientCopySelection {
     Character {
@@ -932,6 +943,8 @@ pub(crate) struct ClientShellState {
     pub(super) last_pane_click: Option<ClientPaneClick>,
     pub(super) selection_autoscroll: Option<ClientSelectionAutoscroll>,
     pub(super) selection_autoscroll_deadline: Option<std::time::Instant>,
+    /// Visual pointer of the last wheel scroll during a selection drag.
+    pub(super) selection_wheel_pointer: Option<ClientSelectionScrollPointer>,
     pub(super) selection_highlight_clear_deadline: Option<std::time::Instant>,
     pub(super) word_selection_gesture: Option<ClientWordSelection>,
     pub(super) word_selection_generation: u64,
@@ -1103,6 +1116,7 @@ impl ClientShellState {
             last_pane_click: None,
             selection_autoscroll: None,
             selection_autoscroll_deadline: None,
+            selection_wheel_pointer: None,
             selection_highlight_clear_deadline: None,
             word_selection_gesture: None,
             word_selection_generation: 0,
@@ -1296,6 +1310,7 @@ impl ClientShellState {
         self.last_pane_click = None;
         self.selection_autoscroll = None;
         self.selection_autoscroll_deadline = None;
+        self.selection_wheel_pointer = None;
         self.selection_highlight_clear_deadline = None;
         self.word_selection_gesture = None;
         self.copy_mode = None;
@@ -1476,6 +1491,7 @@ impl ClientShellState {
             self.selection = None;
             self.selection_autoscroll = None;
             self.selection_autoscroll_deadline = None;
+            self.selection_wheel_pointer = None;
             self.selection_highlight_clear_deadline = None;
             self.word_selection_gesture = None;
             self.last_pane_click = None;
@@ -1704,6 +1720,7 @@ impl ClientShellState {
             self.last_pane_click = None;
             self.selection_autoscroll = None;
             self.selection_autoscroll_deadline = None;
+            self.selection_wheel_pointer = None;
             self.selection_highlight_clear_deadline = None;
             self.word_selection_gesture = None;
             self.copy_mode = None;

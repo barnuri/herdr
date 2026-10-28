@@ -105,15 +105,15 @@ fn pane_segments<'a>(
     })
 }
 
-/// Shifts a pane-relative pixel x by `column_shift` cells, keeping the
-/// pointer's offset inside its cell.
+/// Shifts a one-based, pane-relative pixel x by `column_shift` cells, keeping
+/// the pointer's offset inside its cell.
 pub(super) fn shift_pixel_x(x: u32, hit: &PaneHit, column_shift: i32) -> u32 {
     if column_shift == 0 || hit.inner_rect.width == 0 {
         return x;
     }
     let cell_width = i64::from(hit.pixel_width / u32::from(hit.inner_rect.width));
     let shifted = i64::from(x) + i64::from(column_shift) * cell_width;
-    shifted.clamp(0, i64::from(hit.pixel_width.saturating_sub(1))) as u32
+    shifted.clamp(1, i64::from(hit.pixel_width.max(1))) as u32
 }
 
 impl ClientShellState {
