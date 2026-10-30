@@ -2595,7 +2595,12 @@ impl PaneRuntime {
                 let title_requested =
                     result.terminal_title_changed && render_dirty.request_terminal_title(pane_id);
                 let render_requested = result.request_render && render_dirty.request_pty(pane_id);
-                if title_requested || render_requested {
+                // A BiDi mode switch changes how clients lay out this pane, and
+                // only a full render republishes the pane projection.
+                if result.bidi_mode_changed {
+                    render_dirty.request_generic();
+                }
+                if title_requested || render_requested || result.bidi_mode_changed {
                     render_notify.notify_one();
                 }
                 if let Some(delay) = result.render_delay {
@@ -2800,7 +2805,12 @@ impl PaneRuntime {
                 let title_requested =
                     result.terminal_title_changed && render_dirty.request_terminal_title(pane_id);
                 let render_requested = result.request_render && render_dirty.request_pty(pane_id);
-                if title_requested || render_requested {
+                // A BiDi mode switch changes how clients lay out this pane, and
+                // only a full render republishes the pane projection.
+                if result.bidi_mode_changed {
+                    render_dirty.request_generic();
+                }
+                if title_requested || render_requested || result.bidi_mode_changed {
                     render_notify.notify_one();
                 }
                 if let Some(delay) = result.render_delay {
@@ -3486,6 +3496,12 @@ impl PaneRuntime {
         self.terminal.sgr_pixel_mouse_enabled()
     }
 
+    /// Whether the pane application drew its text in visual order and asked,
+    /// with ECMA-48 `CSI 8 l`, not to be reordered again.
+    pub fn bidi_explicit(&self) -> bool {
+        self.terminal.bidi_explicit()
+    }
+
     pub fn plain_page_keys_use_host_scrollback(&self) -> Option<bool> {
         self.terminal.plain_page_keys_use_host_scrollback()
     }
@@ -4019,16 +4035,17 @@ impl PaneRuntime {
         (release_tx, writer)
     }
 
-    pub(crate) fn test_process_pty_bytes(&self, bytes: &[u8]) {
+    pub(crate) fn test_process_pty_bytes(&self, bytes: &[u8]) -> Vec<Bytes> {
         let _content_write_guard = match self.content_write_lock.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
         };
         self.content_seq.fetch_add(1, Ordering::AcqRel);
         let (tx, _rx) = mpsc::channel(1);
-        let _ = self.terminal.process_pty_bytes(self.pane_id, 0, bytes, &tx);
+        let result = self.terminal.process_pty_bytes(self.pane_id, 0, bytes, &tx);
         self.content_seq.fetch_add(1, Ordering::Release);
         self.compression.wake();
+        result.terminal_responses
     }
 
     pub(crate) fn test_with_scrollback_bytes(

@@ -335,6 +335,11 @@ impl TerminalRuntime {
         self.0.sgr_pixel_mouse_enabled()
     }
 
+    /// Reads only the BiDi explicit mode mirrored after the last PTY write.
+    pub fn bidi_explicit(&self) -> bool {
+        self.0.bidi_explicit()
+    }
+
     pub fn plain_page_keys_use_host_scrollback(&self) -> Option<bool> {
         self.0.plain_page_keys_use_host_scrollback()
     }
@@ -657,8 +662,8 @@ impl TerminalRuntime {
         ))
     }
 
-    pub(crate) fn test_process_pty_bytes(&self, bytes: &[u8]) {
-        self.0.test_process_pty_bytes(bytes);
+    pub(crate) fn test_process_pty_bytes(&self, bytes: &[u8]) -> Vec<Bytes> {
+        self.0.test_process_pty_bytes(bytes)
     }
 
     pub(crate) fn test_with_scrollback_bytes(

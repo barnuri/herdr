@@ -206,17 +206,14 @@ fn client_mouse_selection_highlights_and_copies_through_endpoint_extraction() {
             text: "LIV".into(),
         }),
     );
-    assert!(repaint);
+    assert!(!repaint);
     assert!(matches!(
         &actions[..],
         [ClientShellAction::ClipboardWrite(bytes)] if bytes == b"LIV"
     ));
-    assert_eq!(
-        state
-            .copy_feedback
-            .as_ref()
-            .map(|feedback| feedback.message.as_str()),
-        Some("copied to clipboard")
+    assert!(
+        state.copy_feedback.is_none(),
+        "feedback must wait for clipboard dispatch"
     );
 }
 
@@ -1848,6 +1845,7 @@ fn copy_mode_survives_mouse_motion_and_parks_across_focus_changes() {
         foreground_cwd: Some("/repo".into()),
         focused: true,
         right_click_passthrough: false,
+        bidi_explicit: false,
     });
     state.set_snapshot(Box::new(unfocused.clone()));
     assert_eq!(state.mode, ClientShellMode::Terminal);
